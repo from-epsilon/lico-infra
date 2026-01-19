@@ -1,0 +1,41 @@
+name: deploy-test
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "배포 환경"
+        required: true
+        type: string
+      image:
+        description: "배포할 이미지"
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "env=${{ inputs.env }}"
+          echo "image=${{ inputs.image }}"
+
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ inputs.env }}" != "dev" && "${{ inputs.env }}" != "prod" ]]; then
+            echo "Invalid env: ${{ inputs.env }}"
+            exit 1
+          fi
+
+          if [[ -z "${{ inputs.image }}" ]]; then
+            echo "Empty image"
+            exit 1
+          fi
+
+          echo "OK"
