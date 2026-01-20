@@ -1,10 +1,10 @@
-name: deploy-test
+name: deploy
 
 on:
   workflow_dispatch:
     inputs:
       env:
-        description: "배포 환경"
+        description: "배포 환경(dev만 사용 중)"
         required: true
         type: string
       image:
@@ -16,20 +16,17 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Print inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "env=${{ inputs.env }}"
-          echo "image=${{ inputs.image }}"
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Validate inputs
         shell: bash
         run: |
           set -euo pipefail
 
-          if [[ "${{ inputs.env }}" != "dev" && "${{ inputs.env }}" != "prod" ]]; then
-            echo "Invalid env: ${{ inputs.env }}"
+          DEPLOY_ENV="${{ inputs.env }}"
+          if [[ "${DEPLOY_ENV}" != "dev" && "${DEPLOY_ENV}" != "prod" ]]; then
+            echo "Invalid env: ${DEPLOY_ENV} (allowed: dev, prod)"
             exit 1
           fi
 
@@ -38,4 +35,104 @@ jobs:
             exit 1
           fi
 
-          echo "OK"
+      - name: Setup SSH
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          echo "${SSH_KEY}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          ssh-keyscan -H "${SSH_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Sync app/platform to server (rsync --delete)
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+
+          REMOTE_DIR="/home/epsilon/infra"
+
+          ssh "${SSH_USER}@${SSH_HOST}" "mkdir -p ${REMOTE_DIR}/app ${REMOTE_DIR}/platform"
+
+          ssh "${SSH_USER}@${SSH_HOST}" "command -v rsync >/dev/null 2>&1 || { echo 'rsync not found on server'; exit 1; }"
+
+          rsync -az --delete \
+            -e "ssh" \
+            "./app/" \
+            "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/app/"
+
+          rsync -az --delete \
+            -e "ssh" \
+            "./platform/" \
+            "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/platform/"
+
+      - name: Deploy on server (compose + swarm)
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          DEPLOY_ENV: ${{ inputs.env }}
+          IMAGE: ${{ inputs.image }}
+
+          GHCR_USER: ${{ secrets.GHCR_USER }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+        run: |
+          set -euo pipefail
+
+          ssh "${SSH_USER}@${SSH_HOST}" bash -lc "
+            set -euo pipefail
+
+            DEPLOY_ENV='${DEPLOY_ENV}'
+            IMAGE='${IMAGE}'
+            REMOTE_DIR='/home/epsilon/infra'
+            ENV_FILE='/home/epsilon/env/.env.'\"\${DEPLOY_ENV}\"
+
+            if [[ ! -f \"\${ENV_FILE}\" ]]; then
+              echo \"Env file not found: \${ENV_FILE}\"
+              exit 1
+            fi
+
+            set -a
+            source \"\${ENV_FILE}\"
+            set +a
+
+            echo '${GHCR_PAT}' | docker login ghcr.io -u '${GHCR_USER}' --password-stdin
+
+            CONF_SRC=\"\${REMOTE_DIR}/platform/nginx/conf.d/\${DEPLOY_ENV}.conf\"
+            CONF_DST=\"\${REMOTE_DIR}/platform/nginx/conf.d/app.conf\"
+
+            if [[ ! -f \"\${CONF_SRC}\" ]]; then
+              echo \"Nginx conf not found: \${CONF_SRC}\"
+              exit 1
+            fi
+
+            cp \"\${CONF_SRC}\" \"\${CONF_DST}\"
+
+            COMPOSE_FILE=\"\${REMOTE_DIR}/platform/docker-compose-platform.\${DEPLOY_ENV}.yml\"
+            if [[ ! -f \"\${COMPOSE_FILE}\" ]]; then
+              echo \"Compose file not found: \${COMPOSE_FILE}\"
+              exit 1
+            fi
+
+            docker compose -p platform-\${DEPLOY_ENV} --env-file \"\${ENV_FILE}\" -f \"\${COMPOSE_FILE}\" up -d
+
+            docker compose -p platform-\${DEPLOY_ENV} --env-file \"\${ENV_FILE}\" -f \"\${COMPOSE_FILE}\" exec -T nginx nginx -t
+            docker compose -p platform-\${DEPLOY_ENV} --env-file \"\${ENV_FILE}\" -f \"\${COMPOSE_FILE}\" exec -T nginx nginx -s reload
+
+            STACK_FILE=\"\${REMOTE_DIR}/app/stack-backend.yml\"
+            if [[ ! -f \"\${STACK_FILE}\" ]]; then
+              echo \"Stack file not found: \${STACK_FILE}\"
+              exit 1
+            fi
+
+            export IMAGE
+            docker stack deploy -c \"\${STACK_FILE}\" \"\${DEPLOY_ENV}\"
+          "
