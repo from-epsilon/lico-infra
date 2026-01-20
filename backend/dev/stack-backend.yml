@@ -1,0 +1,52 @@
+services:
+  backend:
+    image: ${IMAGE}
+    networks:
+      - platform_net
+
+    expose:
+      - "8080"
+
+    # 종료 시그널 SIGTERM으로 고정
+    stop_signal: SIGTERM
+
+    # graceful 종료(30s) + 종료 유예 시간
+    stop_grace_period: 45s
+
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 20s
+
+    deploy:
+      # 롤링 업데이트를 위한 레플리카 수
+      replicas: 2
+
+      update_config:
+        # 한 번에 몇 개를 교체할지 설정
+        parallelism: 1
+
+        # 다음 컨테이너 교체 전 대기 시간
+        delay: 10s
+
+        # 새 컨테이너를 먼저 띄우고(old 유지) 정상 확인 후 old를 내리는 방식
+        order: start-first
+
+        # 업데이트 실패 시 자동 롤백
+        failure_action: rollback
+
+      rollback_config:
+        # 롤백도 동일하게 1개씩 순차 롤백
+        parallelism: 1
+        order: stop-first
+
+      restart_policy:
+        # 프로세스 비정상 종료 시 재시작 정책
+        condition: on-failure
+        max_attempts: 3
+
+networks:
+  platform_net:
+    external: true
