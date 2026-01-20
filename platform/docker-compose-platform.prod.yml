@@ -23,6 +23,8 @@ services:
       PGTZ: Asia/Seoul
     volumes:
       - pg_prod_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
     networks:
       - platform_net
     healthcheck:
