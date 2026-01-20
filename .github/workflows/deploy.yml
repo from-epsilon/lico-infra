@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       env:
-        description: "배포 환경(dev만 사용 중)"
+        description: "배포 환경"
         required: true
         type: string
       image:
@@ -40,6 +40,7 @@ jobs:
         env:
           SSH_KEY: ${{ secrets.SSH_KEY }}
           SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
         run: |
           set -euo pipefail
 
@@ -47,29 +48,33 @@ jobs:
           echo "${SSH_KEY}" > ~/.ssh/id_rsa
           chmod 600 ~/.ssh/id_rsa
 
-          ssh-keyscan -H "${SSH_HOST}" >> ~/.ssh/known_hosts
+          ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
 
       - name: Sync app/platform to server (rsync --delete)
         shell: bash
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
         run: |
           set -euo pipefail
 
           REMOTE_DIR="/home/epsilon/infra"
 
-          ssh "${SSH_USER}@${SSH_HOST}" "mkdir -p ${REMOTE_DIR}/app ${REMOTE_DIR}/platform"
+          # 목적: 포트 반영(-p)
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "mkdir -p ${REMOTE_DIR}/app ${REMOTE_DIR}/platform"
 
-          ssh "${SSH_USER}@${SSH_HOST}" "command -v rsync >/dev/null 2>&1 || { echo 'rsync not found on server'; exit 1; }"
+          # 목적: rsync 설치 확인(포트 반영)
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "command -v rsync >/dev/null 2>&1 || { echo 'rsync not found on server'; exit 1; }"
 
+          # 목적: rsync ssh 포트 반영
           rsync -az --delete \
-            -e "ssh" \
+            -e "ssh -p ${SSH_PORT}" \
             "./app/" \
             "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/app/"
 
           rsync -az --delete \
-            -e "ssh" \
+            -e "ssh -p ${SSH_PORT}" \
             "./platform/" \
             "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/platform/"
 
@@ -77,6 +82,7 @@ jobs:
         shell: bash
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
 
           DEPLOY_ENV: ${{ inputs.env }}
@@ -87,7 +93,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          ssh "${SSH_USER}@${SSH_HOST}" bash -lc "
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" bash -lc "
             set -euo pipefail
 
             DEPLOY_ENV='${DEPLOY_ENV}'
