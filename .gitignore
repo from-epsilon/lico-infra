@@ -1,0 +1,8 @@
+# env 파일 커밋 금지
+.env*
+
+# nginx 로그
+platform/nginx/log/
+
+# 기타
+.DS_Store
