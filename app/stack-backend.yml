@@ -6,6 +6,18 @@ services:
 
     expose:
       - "8080"
+      
+    environment:
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
+      DB_URL: ${DB_URL}
+      DB_USERNAME: ${DB_USERNAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST}
+      REDIS_PORT: ${REDIS_PORT}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ISSUER: ${JWT_ISSUER}
+      TOKEN_HASH_PEPPER: ${TOKEN_HASH_PEPPER}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
 
     # 종료 시그널 SIGTERM으로 고정
     stop_signal: SIGTERM
@@ -50,3 +62,4 @@ services:
 networks:
   platform_net:
     external: true
+    name: ${PLATFORM_NET_NAME}
