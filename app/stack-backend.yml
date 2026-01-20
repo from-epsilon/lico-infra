@@ -4,9 +4,6 @@ services:
     networks:
       - platform_net
 
-    expose:
-      - "8080"
-      
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
       DB_URL: ${DB_URL}
