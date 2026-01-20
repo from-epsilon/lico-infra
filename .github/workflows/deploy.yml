@@ -61,13 +61,10 @@ jobs:
 
           REMOTE_DIR="/home/epsilon/infra"
 
-          # 목적: 포트 반영(-p)
           ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "mkdir -p ${REMOTE_DIR}/app ${REMOTE_DIR}/platform"
 
-          # 목적: rsync 설치 확인(포트 반영)
           ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "command -v rsync >/dev/null 2>&1 || { echo 'rsync not found on server'; exit 1; }"
 
-          # 목적: rsync ssh 포트 반영
           rsync -az --delete \
             -e "ssh -p ${SSH_PORT}" \
             "./app/" \
@@ -140,5 +137,6 @@ jobs:
             fi
 
             export IMAGE
-            docker stack deploy -c \"\${STACK_FILE}\" \"\${DEPLOY_ENV}\"
+            docker stack deploy --with-registry-auth -c "\${STACK_FILE}" "\${DEPLOY_ENV}"
+            docker service ps "\${DEPLOY_ENV}_backend" --no-trunc
           "
