@@ -16,9 +16,11 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      # 소스 체크아웃
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 입력값 검증
       - name: Validate inputs
         shell: bash
         run: |
@@ -35,6 +37,7 @@ jobs:
             exit 1
           fi
 
+      # SSH 세팅
       - name: Setup SSH
         shell: bash
         env:
@@ -50,6 +53,7 @@ jobs:
 
           ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
 
+      # 서버에 인프라 파일 동기화
       - name: Sync app/platform to server (rsync --delete)
         shell: bash
         env:
@@ -87,6 +91,7 @@ jobs:
 
           GHCR_USER: ${{ secrets.GHCR_USER }}
           GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          FCM_SA_PATH: ${{ secrets.FCM_SA_PATH }}
         run: |
           set -euo pipefail
 
@@ -106,6 +111,18 @@ jobs:
             set -a
             source \"\${ENV_FILE}\"
             set +a
+
+            SECRET_NAME='firebase_sa'
+            SECRET_FILE='${FCM_SA_PATH}'
+
+            if [[ ! -f \"\${SECRET_FILE}\" ]]; then
+              echo \"FCM service account json not found\"
+              exit 1
+            fi
+
+            # secret 존재 여부 확인 후 없으면 생성
+            docker secret inspect \"\${SECRET_NAME}\" >/dev/null 2>&1 || \
+              docker secret create \"\${SECRET_NAME}\" \"\${SECRET_FILE}\"
 
             echo '${GHCR_PAT}' | docker login ghcr.io -u '${GHCR_USER}' --password-stdin
 
@@ -137,6 +154,6 @@ jobs:
             fi
 
             export IMAGE
-            docker stack deploy --with-registry-auth -c "\${STACK_FILE}" "\${DEPLOY_ENV}"
-            docker service ps "\${DEPLOY_ENV}_backend" --no-trunc
+            docker stack deploy --with-registry-auth -c \"\${STACK_FILE}\" \"\${DEPLOY_ENV}\"
+            docker service ps \"\${DEPLOY_ENV}_backend\"
           "
