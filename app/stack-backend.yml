@@ -4,6 +4,11 @@ services:
     networks:
       - platform_net
 
+    secrets:
+      - source: firebase_sa
+        target: firebase-sa.json
+        mode: 0444
+
     environment:
       SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE}
       DB_URL: ${DB_URL}
@@ -58,6 +63,10 @@ services:
         # 프로세스 비정상 종료 시 재시작 정책
         condition: on-failure
         max_attempts: 3
+
+secrets:
+  firebase_sa:
+    external: true
 
 networks:
   platform_net:
