@@ -11,6 +11,11 @@ on:
         description: "배포할 이미지"
         required: true
         type: string
+      debug:
+        description: "디버그 로그 출력 (true|false)"
+        required: false
+        default: "false"
+        type: string
 
 jobs:
   deploy:

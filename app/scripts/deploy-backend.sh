@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# -----------------------------------------------------------------------------
+# 필수 환경변수 검증
+# -----------------------------------------------------------------------------
 : "${DEPLOY_ENV:?DEPLOY_ENV is required (dev|prod)}"
 : "${IMAGE:?IMAGE is required}"
 : "${GHCR_USER:?GHCR_USER is required}"
@@ -10,16 +13,49 @@ set -euo pipefail
 REMOTE_DIR="/home/epsilon/infra"
 ENV_FILE="/home/epsilon/env/.env.${DEPLOY_ENV}"
 
+DEBUG_DEPLOY="${DEBUG_DEPLOY:-false}"
+
+# -----------------------------------------------------------------------------
+# 공통 유틸
+# -----------------------------------------------------------------------------
+log() {
+  echo "[deploy] $*"
+}
+
+enable_trace_if_debug() {
+  if [[ "${DEBUG_DEPLOY}" == "true" ]]; then
+    export PS4='+ [${BASH_SOURCE}:${LINENO}] '
+    set -x
+  fi
+}
+
+disable_trace() {
+  set +x || true
+}
+
+# -----------------------------------------------------------------------------
+# 시작 로그
+# -----------------------------------------------------------------------------
+log "begin env=${DEPLOY_ENV}"
+log "image=${IMAGE}"
+log "env_file=${ENV_FILE}"
+log "debug=${DEBUG_DEPLOY}"
+
 # env 파일 존재 검증
 if [[ ! -f "${ENV_FILE}" ]]; then
-  echo "Env file not found: ${ENV_FILE}"
+  log "Env file not found: ${ENV_FILE}"
   exit 1
 fi
 
-# env 파일 로드 (파일 안 변수들을 현재 쉘 환경변수로 export)
+# -----------------------------------------------------------------------------
+# env 파일 로드 (시크릿 포함 가능: trace OFF)
+# -----------------------------------------------------------------------------
+disable_trace
 set -a
+# shellcheck disable=SC1090
 source "${ENV_FILE}"
 set +a
+enable_trace_if_debug
 
 # -----------------------------------------------------------------------------
 # Swarm secret 준비
@@ -28,19 +64,22 @@ SECRET_NAME="firebase_sa"
 SECRET_FILE="${FCM_SA_PATH}"
 
 if [[ ! -f "${SECRET_FILE}" ]]; then
-  echo "FCM service account json not found: ${SECRET_FILE}"
+  log "FCM service account json not found: ${SECRET_FILE}"
   exit 1
 fi
 
-# secret은 생성 후 수정이 불가
-# 이미 존재하면 그대로 사용
+# secret은 생성 후 수정 불가: 없을 때만 생성
+enable_trace_if_debug
 docker secret inspect "${SECRET_NAME}" >/dev/null 2>&1 || \
   docker secret create "${SECRET_NAME}" "${SECRET_FILE}"
+disable_trace
 
 # -----------------------------------------------------------------------------
-# GHCR 로그인
+# GHCR 로그인 (PAT 노출 방지: trace OFF)
 # -----------------------------------------------------------------------------
+disable_trace
 echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+enable_trace_if_debug
 
 # -----------------------------------------------------------------------------
 # Nginx conf 교체 및 플랫폼 compose 반영
@@ -49,7 +88,7 @@ CONF_SRC="${REMOTE_DIR}/platform/nginx/conf.d/${DEPLOY_ENV}.conf"
 CONF_DST="${REMOTE_DIR}/platform/nginx/conf.d/app.conf"
 
 if [[ ! -f "${CONF_SRC}" ]]; then
-  echo "Nginx conf not found: ${CONF_SRC}"
+  log "Nginx conf not found: ${CONF_SRC}"
   exit 1
 fi
 
@@ -57,94 +96,132 @@ cp "${CONF_SRC}" "${CONF_DST}"
 
 COMPOSE_FILE="${REMOTE_DIR}/platform/docker-compose-platform.${DEPLOY_ENV}.yml"
 if [[ ! -f "${COMPOSE_FILE}" ]]; then
-  echo "Compose file not found: ${COMPOSE_FILE}"
+  log "Compose file not found: ${COMPOSE_FILE}"
   exit 1
 fi
 
+enable_trace_if_debug
 docker compose -p "platform-${DEPLOY_ENV}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d
 docker compose -p "platform-${DEPLOY_ENV}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -t
 docker compose -p "platform-${DEPLOY_ENV}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -s reload
+disable_trace
 
 # -----------------------------------------------------------------------------
 # backend stack deploy
 # -----------------------------------------------------------------------------
 STACK_FILE="${REMOTE_DIR}/app/stack-backend.yml"
 if [[ ! -f "${STACK_FILE}" ]]; then
-  echo "Stack file not found: ${STACK_FILE}"
+  log "Stack file not found: ${STACK_FILE}"
   exit 1
 fi
 
-export IMAGE
-docker stack deploy --with-registry-auth -c "${STACK_FILE}" "${DEPLOY_ENV}"
+log "validate rendered stack config"
+RENDERED="$(mktemp)"
+docker stack config -c "${STACK_FILE}" > "${RENDERED}"
 
-# -----------------------------------------------------------------------------
-# 롤아웃 완료 대기
-# -----------------------------------------------------------------------------
-SERVICE_NAME="${DEPLOY_ENV}_backend"
-TIMEOUT_SEC=600
-SLEEP_SEC=5
-start_ts="$(date +%s)"
-
-# 스택 deploy 직후에는 service 생성/갱신 반영 타이밍이 있을 수 있어 재시도
-for i in {1..20}; do
-  docker service inspect "${SERVICE_NAME}" >/dev/null 2>&1 && break
-  sleep 1
-done
-
-docker service inspect "${SERVICE_NAME}" >/dev/null 2>&1 || {
-  echo "Service not found: ${SERVICE_NAME}"
+grep -qE '(^|\s)firebase_sa(\s|:)' "${RENDERED}" || {
+  log "Rendered stack config does not contain firebase_sa. Check stack-backend.yml and rsync path."
+  log "rendered preview (head)"
+  sed -n '1,260p' "${RENDERED}"
+  rm -f "${RENDERED}"
   exit 1
 }
 
-desired_replicas="$(docker service inspect -f '{{.Spec.Mode.Replicated.Replicas}}' "${SERVICE_NAME}")"
+rm -f "${RENDERED}"
 
-echo "Waiting for rollout to complete"
-echo "service=${SERVICE_NAME}"
-echo "desired_replicas=${desired_replicas}"
-echo "timeout_sec=${TIMEOUT_SEC}"
+log "deploy stack"
+enable_trace_if_debug
+export IMAGE
+docker stack deploy --with-registry-auth -c "${STACK_FILE}" "${DEPLOY_ENV}"
+disable_trace
 
-while true; do
-  now_ts="$(date +%s)"
-  elapsed="$((now_ts - start_ts))"
+# -----------------------------------------------------------------------------
+# 롤아웃 완료 대기 함수
+# -----------------------------------------------------------------------------
+wait_rollout() {
+  local service_name="$1"
+  local timeout_sec="${2:-600}"
+  local sleep_sec="${3:-5}"
 
-  if [[ "${elapsed}" -ge "${TIMEOUT_SEC}" ]]; then
-    echo "Timeout waiting for rollout: ${SERVICE_NAME}"
-    docker service ps --no-trunc "${SERVICE_NAME}" || true
-    docker service inspect -f '{{json .UpdateStatus}}' "${SERVICE_NAME}" || true
-    docker service logs --raw --tail 200 "${SERVICE_NAME}" || true
-    exit 1
-  fi
+  local start_ts
+  start_ts="$(date +%s)"
 
-  update_state="$(docker service inspect -f '{{if .UpdateStatus}}{{.UpdateStatus.State}}{{else}}none{{end}}' "${SERVICE_NAME}")"
-  update_msg="$(docker service inspect -f '{{if .UpdateStatus}}{{.UpdateStatus.Message}}{{else}}no_update_status{{end}}' "${SERVICE_NAME}")"
+  # 생성 반영 지연 대비 재시도
+  for _ in {1..20}; do
+    docker service inspect "${service_name}" >/dev/null 2>&1 && break
+    sleep 1
+  done
 
-  case "${update_state}" in
-    paused|rollback_started|rollback_paused|rollback_completed)
-      echo "Rollout failed"
-      echo "update_state=${update_state}"
-      echo "update_message=${update_msg}"
-      docker service ps --no-trunc "${SERVICE_NAME}" || true
-      docker service logs --raw --tail 200 "${SERVICE_NAME}" || true
-      exit 1
-      ;;
-  esac
+  docker service inspect "${service_name}" >/dev/null 2>&1 || {
+    log "Service not found: ${service_name}"
+    return 1
+  }
 
-  running_count="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "${SERVICE_NAME}" | grep -c '^Running' || true)"
-  non_running_count="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "${SERVICE_NAME}" | grep -vc '^Running' || true)"
+  local desired
+  desired="$(docker service inspect -f '{{.Spec.Mode.Replicated.Replicas}}' "${service_name}")"
 
-  if [[ "${non_running_count}" -eq 0 && "${running_count}" -eq "${desired_replicas}" ]]; then
-    if [[ "${update_state}" == "completed" || "${update_state}" == "none" ]]; then
-      echo "Rollout succeeded"
-      echo "update_state=${update_state}"
-      echo "running=${running_count}/${desired_replicas}"
-      break
+  log "waiting rollout service=${service_name} desired=${desired} timeout=${timeout_sec}s"
+
+  while true; do
+    local now_ts elapsed
+    now_ts="$(date +%s)"
+    elapsed="$((now_ts - start_ts))"
+
+    if [[ "${elapsed}" -ge "${timeout_sec}" ]]; then
+      log "Timeout waiting for rollout: ${service_name}"
+      docker service ps --no-trunc "${service_name}" || true
+      docker service inspect -f '{{json .UpdateStatus}}' "${service_name}" || true
+      docker service logs --raw --tail 200 "${service_name}" || true
+      return 1
     fi
-  fi
 
-  echo "Rollout in progress"
-  echo "update_state=${update_state}"
-  echo "running=${running_count}/${desired_replicas}"
-  sleep "${SLEEP_SEC}"
-done
+    local update_state update_msg
+    update_state="$(docker service inspect -f '{{if .UpdateStatus}}{{.UpdateStatus.State}}{{else}}none{{end}}' "${service_name}")"
+    update_msg="$(docker service inspect -f '{{if .UpdateStatus}}{{.UpdateStatus.Message}}{{else}}no_update_status{{end}}' "${service_name}")"
 
-docker service ps "${SERVICE_NAME}"
+    case "${update_state}" in
+      paused|rollback_started|rollback_paused|rollback_completed)
+        log "Rollout failed service=${service_name} update_state=${update_state}"
+        log "update_message=${update_msg}"
+        docker service ps --no-trunc "${service_name}" || true
+        docker service logs --raw --tail 200 "${service_name}" || true
+        return 1
+        ;;
+    esac
+
+    local running_count non_running_count
+    running_count="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "${service_name}" | grep -c '^Running' || true)"
+    non_running_count="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "${service_name}" | grep -vc '^Running' || true)"
+
+    if [[ "${non_running_count}" -eq 0 && "${running_count}" -eq "${desired}" ]]; then
+      if [[ "${update_state}" == "completed" || "${update_state}" == "none" ]]; then
+        log "Rollout succeeded service=${service_name} running=${running_count}/${desired}"
+        break
+      fi
+    fi
+
+    log "Rollout in progress service=${service_name} state=${update_state} running=${running_count}/${desired}"
+    sleep "${sleep_sec}"
+  done
+
+  docker service ps "${service_name}" || true
+  return 0
+}
+
+# -----------------------------------------------------------------------------
+# backend 롤아웃 대기
+# -----------------------------------------------------------------------------
+BACKEND_SERVICE="${DEPLOY_ENV}_backend"
+wait_rollout "${BACKEND_SERVICE}" 600 5
+
+# -----------------------------------------------------------------------------
+# batch 서비스가 있으면 batch도 롤아웃 대기
+# -----------------------------------------------------------------------------
+BATCH_SERVICE="${DEPLOY_ENV}_batch"
+if docker service inspect "${BATCH_SERVICE}" >/dev/null 2>&1; then
+  wait_rollout "${BATCH_SERVICE}" 600 5
+else
+  log "batch service not found (skip): ${BATCH_SERVICE}"
+fi
+
+log "done env=${DEPLOY_ENV}"
