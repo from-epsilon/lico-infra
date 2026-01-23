@@ -85,6 +85,12 @@ TIMEOUT_SEC=600
 SLEEP_SEC=5
 start_ts="$(date +%s)"
 
+# 스택 deploy 직후에는 service 생성/갱신 반영 타이밍이 있을 수 있어 재시도
+for i in {1..20}; do
+  docker service inspect "${SERVICE_NAME}" >/dev/null 2>&1 && break
+  sleep 1
+done
+
 docker service inspect "${SERVICE_NAME}" >/dev/null 2>&1 || {
   echo "Service not found: ${SERVICE_NAME}"
   exit 1
