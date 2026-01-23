@@ -101,5 +101,25 @@ jobs:
             GHCR_USER="${GHCR_USER}" \
             GHCR_PAT="${GHCR_PAT}" \
             FCM_SA_PATH="${FCM_SA_PATH}" \
-            bash -lc "bash -x /home/epsilon/infra/app/scripts/deploy-backend.sh"
+            bash -s <<'REMOTE'
+          set -euo pipefail
+
+          SCRIPT="/home/epsilon/infra/app/scripts/deploy-backend.sh"
+
+          echo "[deploy] script_path=${SCRIPT}"
+          echo "[deploy] DEPLOY_ENV=${DEPLOY_ENV}"
+          echo "[deploy] IMAGE=${IMAGE}"
+          echo "[deploy] FCM_SA_PATH=${FCM_SA_PATH}"
+
+          if [[ ! -f "${SCRIPT}" ]]; then
+            echo "[deploy] Script not found: ${SCRIPT}"
+            exit 1
+          fi
+
+          sed -i 's/\r$//' "${SCRIPT}"
+
+          chmod +x "${SCRIPT}"
+          bash -x "${SCRIPT}"
+          REMOTE
+
 
