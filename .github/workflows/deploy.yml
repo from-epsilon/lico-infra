@@ -95,65 +95,130 @@ jobs:
         run: |
           set -euo pipefail
 
-          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" bash -lc "
-            set -euo pipefail
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
+            DEPLOY_ENV="${DEPLOY_ENV}" \
+            IMAGE="${IMAGE}" \
+            GHCR_USER="${GHCR_USER}" \
+            GHCR_PAT="${GHCR_PAT}" \
+            FCM_SA_PATH="${FCM_SA_PATH}" \
+            bash -s <<'REMOTE'
+          set -euo pipefail
 
-            DEPLOY_ENV='${DEPLOY_ENV}'
-            IMAGE='${IMAGE}'
-            REMOTE_DIR='/home/epsilon/infra'
-            ENV_FILE='/home/epsilon/env/.env.'\"\${DEPLOY_ENV}\"
+          REMOTE_DIR='/home/epsilon/infra'
+          ENV_FILE="/home/epsilon/env/.env.${DEPLOY_ENV}"
 
-            if [[ ! -f \"\${ENV_FILE}\" ]]; then
-              echo \"Env file not found: \${ENV_FILE}\"
+          if [[ ! -f "${ENV_FILE}" ]]; then
+            echo "Env file not found: ${ENV_FILE}"
+            exit 1
+          fi
+
+          set -a
+          source "${ENV_FILE}"
+          set +a
+
+          SECRET_NAME='firebase_sa'
+          SECRET_FILE="${FCM_SA_PATH}"
+
+          if [[ ! -f "${SECRET_FILE}" ]]; then
+            echo "FCM service account json not found: ${SECRET_FILE}"
+            exit 1
+          fi
+
+          docker secret inspect "${SECRET_NAME}" >/dev/null 2>&1 || \
+            docker secret create "${SECRET_NAME}" "${SECRET_FILE}"
+
+          echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
+
+          CONF_SRC="${REMOTE_DIR}/platform/nginx/conf.d/${DEPLOY_ENV}.conf"
+          CONF_DST="${REMOTE_DIR}/platform/nginx/conf.d/app.conf"
+
+          if [[ ! -f "${CONF_SRC}" ]]; then
+            echo "Nginx conf not found: ${CONF_SRC}"
+            exit 1
+          fi
+
+          cp "${CONF_SRC}" "${CONF_DST}"
+
+          COMPOSE_FILE="${REMOTE_DIR}/platform/docker-compose-platform.${DEPLOY_ENV}.yml"
+          if [[ ! -f "${COMPOSE_FILE}" ]]; then
+            echo "Compose file not found: ${COMPOSE_FILE}"
+            exit 1
+          fi
+
+          docker compose -p "platform-${DEPLOY_ENV}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d
+          docker compose -p "platform-${DEPLOY_ENV}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -t
+          docker compose -p "platform-${DEPLOY_ENV}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -s reload
+
+          STACK_FILE="${REMOTE_DIR}/app/stack-backend.yml"
+          if [[ ! -f "${STACK_FILE}" ]]; then
+            echo "Stack file not found: ${STACK_FILE}"
+            exit 1
+          fi
+
+          export IMAGE
+          docker stack deploy --with-registry-auth -c "${STACK_FILE}" "${DEPLOY_ENV}"
+
+          SERVICE_NAME="${DEPLOY_ENV}_backend"
+          TIMEOUT_SEC=600
+          SLEEP_SEC=5
+          start_ts="$(date +%s)"
+
+          docker service inspect "${SERVICE_NAME}" >/dev/null 2>&1 || {
+            echo "Service not found: ${SERVICE_NAME}"
+            exit 1
+          }
+
+          desired_replicas="$(docker service inspect -f '{{.Spec.Mode.Replicated.Replicas}}' "${SERVICE_NAME}")"
+
+          echo "Waiting for rollout to complete"
+          echo "service=${SERVICE_NAME}"
+          echo "desired_replicas=${desired_replicas}"
+          echo "timeout_sec=${TIMEOUT_SEC}"
+
+          while true; do
+            now_ts="$(date +%s)"
+            elapsed="$((now_ts - start_ts))"
+
+            if [[ "${elapsed}" -ge "${TIMEOUT_SEC}" ]]; then
+              echo "Timeout waiting for rollout: ${SERVICE_NAME}"
+              docker service ps --no-trunc "${SERVICE_NAME}" || true
+              docker service inspect -f '{{json .UpdateStatus}}' "${SERVICE_NAME}" || true
+              docker service logs --raw --tail 200 "${SERVICE_NAME}" || true
               exit 1
             fi
 
-            set -a
-            source \"\${ENV_FILE}\"
-            set +a
+            update_state="$(docker service inspect -f '{{if .UpdateStatus}}{{.UpdateStatus.State}}{{else}}none{{end}}' "${SERVICE_NAME}")"
+            update_msg="$(docker service inspect -f '{{if .UpdateStatus}}{{.UpdateStatus.Message}}{{else}}no_update_status{{end}}' "${SERVICE_NAME}")"
 
-            SECRET_NAME='firebase_sa'
-            SECRET_FILE='${FCM_SA_PATH}'
+            case "${update_state}" in
+              paused|rollback_started|rollback_paused|rollback_completed)
+                echo "Rollout failed"
+                echo "update_state=${update_state}"
+                echo "update_message=${update_msg}"
+                docker service ps --no-trunc "${SERVICE_NAME}" || true
+                docker service logs --raw --tail 200 "${SERVICE_NAME}" || true
+                exit 1
+                ;;
+            esac
 
-            if [[ ! -f \"\${SECRET_FILE}\" ]]; then
-              echo \"FCM service account json not found\"
-              exit 1
+            running_count="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "${SERVICE_NAME}" | grep -c '^Running' || true)"
+            non_running_count="$(docker service ps --filter desired-state=running --format '{{.CurrentState}}' "${SERVICE_NAME}" | grep -vc '^Running' || true)"
+
+            if [[ "${non_running_count}" -eq 0 && "${running_count}" -eq "${desired_replicas}" ]]; then
+              if [[ "${update_state}" == "completed" || "${update_state}" == "none" ]]; then
+                echo "Rollout succeeded"
+                echo "update_state=${update_state}"
+                echo "running=${running_count}/${desired_replicas}"
+                break
+              fi
             fi
 
-            # secret 존재 여부 확인 후 없으면 생성
-            docker secret inspect \"\${SECRET_NAME}\" >/dev/null 2>&1 || \
-              docker secret create \"\${SECRET_NAME}\" \"\${SECRET_FILE}\"
 
-            echo '${GHCR_PAT}' | docker login ghcr.io -u '${GHCR_USER}' --password-stdin
+            echo "Rollout in progress"
+            echo "update_state=${update_state}"
+            echo "running=${running_count}/${desired_replicas}"
+            sleep "${SLEEP_SEC}"
+          done
 
-            CONF_SRC=\"\${REMOTE_DIR}/platform/nginx/conf.d/\${DEPLOY_ENV}.conf\"
-            CONF_DST=\"\${REMOTE_DIR}/platform/nginx/conf.d/app.conf\"
-
-            if [[ ! -f \"\${CONF_SRC}\" ]]; then
-              echo \"Nginx conf not found: \${CONF_SRC}\"
-              exit 1
-            fi
-
-            cp \"\${CONF_SRC}\" \"\${CONF_DST}\"
-
-            COMPOSE_FILE=\"\${REMOTE_DIR}/platform/docker-compose-platform.\${DEPLOY_ENV}.yml\"
-            if [[ ! -f \"\${COMPOSE_FILE}\" ]]; then
-              echo \"Compose file not found: \${COMPOSE_FILE}\"
-              exit 1
-            fi
-
-            docker compose -p platform-\${DEPLOY_ENV} --env-file \"\${ENV_FILE}\" -f \"\${COMPOSE_FILE}\" up -d
-
-            docker compose -p platform-\${DEPLOY_ENV} --env-file \"\${ENV_FILE}\" -f \"\${COMPOSE_FILE}\" exec -T nginx nginx -t
-            docker compose -p platform-\${DEPLOY_ENV} --env-file \"\${ENV_FILE}\" -f \"\${COMPOSE_FILE}\" exec -T nginx nginx -s reload
-
-            STACK_FILE=\"\${REMOTE_DIR}/app/stack-backend.yml\"
-            if [[ ! -f \"\${STACK_FILE}\" ]]; then
-              echo \"Stack file not found: \${STACK_FILE}\"
-              exit 1
-            fi
-
-            export IMAGE
-            docker stack deploy --with-registry-auth -c \"\${STACK_FILE}\" \"\${DEPLOY_ENV}\"
-            docker service ps \"\${DEPLOY_ENV}_backend\"
-          "
+          docker service ps "${SERVICE_NAME}"
+          REMOTE
