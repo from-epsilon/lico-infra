@@ -101,5 +101,5 @@ jobs:
             GHCR_USER="${GHCR_USER}" \
             GHCR_PAT="${GHCR_PAT}" \
             FCM_SA_PATH="${FCM_SA_PATH}" \
-            bash -lc "bash /home/epsilon/infra/app/scripts/deploy-backend.sh"
+            bash -lc "bash -x /home/epsilon/infra/app/scripts/deploy-backend.sh"
 
