@@ -61,6 +61,7 @@ jobs:
           STACK_NAME: observability
           PLATFORM_NET_NAME: ${{ secrets.PLATFORM_NET_NAME }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          GRAFANA_DOMAIN: ${{ secrets.GRAFANA_DOMAIN }}
           DEBUG_DEPLOY: ${{ inputs.debug }}
         run: |
           set -euo pipefail
@@ -69,6 +70,7 @@ jobs:
             STACK_NAME="${STACK_NAME}" \
             PLATFORM_NET_NAME="${PLATFORM_NET_NAME}" \
             GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" \
+            GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-$SSH_HOST}" \
             DEBUG_DEPLOY="${DEBUG_DEPLOY}" \
             bash -s <<'REMOTE'
           set -euo pipefail
@@ -92,6 +94,11 @@ jobs:
 
           if [[ -z "${GRAFANA_ADMIN_PASSWORD}" ]]; then
             echo "[deploy] GRAFANA_ADMIN_PASSWORD is empty"
+            exit 1
+          fi
+
+          if [[ -z "${GRAFANA_DOMAIN}" ]]; then
+            echo "[deploy] GRAFANA_DOMAIN is empty"
             exit 1
           fi
 
