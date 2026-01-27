@@ -3,10 +3,6 @@ name: deploy-observability
 on:
   workflow_dispatch:
     inputs:
-      env:
-        description: "배포 환경"
-        required: true
-        type: string
       debug:
         description: "디버그 로그 출력 (true|false)"
         required: false
@@ -19,17 +15,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Validate inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          DEPLOY_ENV="${{ inputs.env }}"
-          if [[ "${DEPLOY_ENV}" != "dev" && "${DEPLOY_ENV}" != "prod" ]]; then
-            echo "Invalid env: ${DEPLOY_ENV} (allowed: dev, prod)"
-            exit 1
-          fi
 
       - name: Setup SSH
         shell: bash
@@ -66,14 +51,6 @@ jobs:
             "./platform/observability/" \
             "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/platform/observability/"
 
-      - name: Resolve Grafana secrets
-        shell: bash
-        env:
-          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
-        run: |
-          set -euo pipefail
-          echo "GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}" >> "${GITHUB_ENV}"
-
       - name: Deploy observability stack (swarm)
         shell: bash
         env:
@@ -81,30 +58,20 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
 
-          DEPLOY_ENV: ${{ inputs.env }}
           STACK_NAME: observability
+          PLATFORM_NET_NAME: ${{ secrets.PLATFORM_NET_NAME }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           DEBUG_DEPLOY: ${{ inputs.debug }}
         run: |
           set -euo pipefail
 
           ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            DEPLOY_ENV="${DEPLOY_ENV}" \
             STACK_NAME="${STACK_NAME}" \
             PLATFORM_NET_NAME="${PLATFORM_NET_NAME}" \
             GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" \
             DEBUG_DEPLOY="${DEBUG_DEPLOY}" \
             bash -s <<'REMOTE'
           set -euo pipefail
-
-          ENV_FILE="/home/epsilon/env/.env.${DEPLOY_ENV}"
-          if [[ -f "${ENV_FILE}" ]]; then
-            set -a
-            # shellcheck disable=SC1090
-            source "${ENV_FILE}"
-            set +a
-          else
-            echo "[deploy] Env file not found: ${ENV_FILE}"
-          fi
 
           if [[ "${DEBUG_DEPLOY:-false}" == "true" ]]; then
             export PS4='+ [${BASH_SOURCE:-$0}:${LINENO}] '
