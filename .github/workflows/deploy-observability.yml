@@ -66,32 +66,13 @@ jobs:
             "./platform/observability/" \
             "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/platform/observability/"
 
-      - name: Resolve environment secrets
+      - name: Resolve Grafana secrets
         shell: bash
         env:
-          DEPLOY_ENV: ${{ inputs.env }}
-          PLATFORM_NET_NAME: ${{ secrets.PLATFORM_NET_NAME }}
-          PLATFORM_NET_NAME_DEV: ${{ secrets.PLATFORM_NET_NAME_DEV }}
-          PLATFORM_NET_NAME_PROD: ${{ secrets.PLATFORM_NET_NAME_PROD }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
-          GRAFANA_ADMIN_PASSWORD_DEV: ${{ secrets.GRAFANA_ADMIN_PASSWORD_DEV }}
-          GRAFANA_ADMIN_PASSWORD_PROD: ${{ secrets.GRAFANA_ADMIN_PASSWORD_PROD }}
         run: |
           set -euo pipefail
-
-          if [[ "${DEPLOY_ENV}" == "dev" ]]; then
-            NET_NAME="${PLATFORM_NET_NAME_DEV:-$PLATFORM_NET_NAME}"
-            GRAFANA_PASS="${GRAFANA_ADMIN_PASSWORD_DEV:-$GRAFANA_ADMIN_PASSWORD}"
-          elif [[ "${DEPLOY_ENV}" == "prod" ]]; then
-            NET_NAME="${PLATFORM_NET_NAME_PROD:-$PLATFORM_NET_NAME}"
-            GRAFANA_PASS="${GRAFANA_ADMIN_PASSWORD_PROD:-$GRAFANA_ADMIN_PASSWORD}"
-          else
-            echo "Invalid env: ${DEPLOY_ENV}"
-            exit 1
-          fi
-
-          echo "PLATFORM_NET_NAME=${NET_NAME}" >> "${GITHUB_ENV}"
-          echo "GRAFANA_ADMIN_PASSWORD=${GRAFANA_PASS}" >> "${GITHUB_ENV}"
+          echo "GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}" >> "${GITHUB_ENV}"
 
       - name: Deploy observability stack (swarm)
         shell: bash
@@ -100,12 +81,14 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
 
+          DEPLOY_ENV: ${{ inputs.env }}
           STACK_NAME: observability
           DEBUG_DEPLOY: ${{ inputs.debug }}
         run: |
           set -euo pipefail
 
           ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
+            DEPLOY_ENV="${DEPLOY_ENV}" \
             STACK_NAME="${STACK_NAME}" \
             PLATFORM_NET_NAME="${PLATFORM_NET_NAME}" \
             GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" \
@@ -113,8 +96,18 @@ jobs:
             bash -s <<'REMOTE'
           set -euo pipefail
 
-          if [[ "${DEBUG_DEPLOY}" == "true" ]]; then
-            export PS4='+ [${0##*/}:${LINENO}] '
+          ENV_FILE="/home/epsilon/env/.env.${DEPLOY_ENV}"
+          if [[ -f "${ENV_FILE}" ]]; then
+            set -a
+            # shellcheck disable=SC1090
+            source "${ENV_FILE}"
+            set +a
+          else
+            echo "[deploy] Env file not found: ${ENV_FILE}"
+          fi
+
+          if [[ "${DEBUG_DEPLOY:-false}" == "true" ]]; then
+            export PS4='+ [${BASH_SOURCE:-$0}:${LINENO}] '
             set -x
           fi
 
