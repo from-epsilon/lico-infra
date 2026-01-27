@@ -1,0 +1,139 @@
+name: deploy-observability
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "배포 환경"
+        required: true
+        type: string
+      debug:
+        description: "디버그 로그 출력 (true|false)"
+        required: false
+        default: "false"
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DEPLOY_ENV="${{ inputs.env }}"
+          if [[ "${DEPLOY_ENV}" != "dev" && "${DEPLOY_ENV}" != "prod" ]]; then
+            echo "Invalid env: ${DEPLOY_ENV} (allowed: dev, prod)"
+            exit 1
+          fi
+
+      - name: Setup SSH
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          echo "${SSH_KEY}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Sync observability to server (rsync --delete)
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+
+          REMOTE_DIR="/home/epsilon/infra"
+
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "mkdir -p ${REMOTE_DIR}/platform/observability"
+
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "command -v rsync >/dev/null 2>&1 || { echo 'rsync not found on server'; exit 1; }"
+
+          rsync -az --delete \
+            -e "ssh -p ${SSH_PORT}" \
+            "./platform/observability/" \
+            "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/platform/observability/"
+
+      - name: Resolve environment secrets
+        shell: bash
+        env:
+          DEPLOY_ENV: ${{ inputs.env }}
+          PLATFORM_NET_NAME: ${{ secrets.PLATFORM_NET_NAME }}
+          PLATFORM_NET_NAME_DEV: ${{ secrets.PLATFORM_NET_NAME_DEV }}
+          PLATFORM_NET_NAME_PROD: ${{ secrets.PLATFORM_NET_NAME_PROD }}
+          GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          GRAFANA_ADMIN_PASSWORD_DEV: ${{ secrets.GRAFANA_ADMIN_PASSWORD_DEV }}
+          GRAFANA_ADMIN_PASSWORD_PROD: ${{ secrets.GRAFANA_ADMIN_PASSWORD_PROD }}
+        run: |
+          set -euo pipefail
+
+          if [[ "${DEPLOY_ENV}" == "dev" ]]; then
+            NET_NAME="${PLATFORM_NET_NAME_DEV:-$PLATFORM_NET_NAME}"
+            GRAFANA_PASS="${GRAFANA_ADMIN_PASSWORD_DEV:-$GRAFANA_ADMIN_PASSWORD}"
+          elif [[ "${DEPLOY_ENV}" == "prod" ]]; then
+            NET_NAME="${PLATFORM_NET_NAME_PROD:-$PLATFORM_NET_NAME}"
+            GRAFANA_PASS="${GRAFANA_ADMIN_PASSWORD_PROD:-$GRAFANA_ADMIN_PASSWORD}"
+          else
+            echo "Invalid env: ${DEPLOY_ENV}"
+            exit 1
+          fi
+
+          echo "PLATFORM_NET_NAME=${NET_NAME}" >> "${GITHUB_ENV}"
+          echo "GRAFANA_ADMIN_PASSWORD=${GRAFANA_PASS}" >> "${GITHUB_ENV}"
+
+      - name: Deploy observability stack (swarm)
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          STACK_NAME: observability
+          DEBUG_DEPLOY: ${{ inputs.debug }}
+        run: |
+          set -euo pipefail
+
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
+            STACK_NAME="${STACK_NAME}" \
+            PLATFORM_NET_NAME="${PLATFORM_NET_NAME}" \
+            GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" \
+            DEBUG_DEPLOY="${DEBUG_DEPLOY}" \
+            bash -s <<'REMOTE'
+          set -euo pipefail
+
+          if [[ "${DEBUG_DEPLOY}" == "true" ]]; then
+            export PS4='+ [${BASH_SOURCE}:${LINENO}] '
+            set -x
+          fi
+
+          STACK_FILE="/home/epsilon/infra/platform/observability/stack-observability.yml"
+
+          if [[ ! -f "${STACK_FILE}" ]]; then
+            echo "[deploy] Stack file not found: ${STACK_FILE}"
+            exit 1
+          fi
+
+          if [[ -z "${PLATFORM_NET_NAME}" ]]; then
+            echo "[deploy] PLATFORM_NET_NAME is empty"
+            exit 1
+          fi
+
+          if [[ -z "${GRAFANA_ADMIN_PASSWORD}" ]]; then
+            echo "[deploy] GRAFANA_ADMIN_PASSWORD is empty"
+            exit 1
+          fi
+
+          docker stack deploy -c "${STACK_FILE}" "${STACK_NAME}"
+          REMOTE

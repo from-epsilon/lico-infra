@@ -1,0 +1,22 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "backend"
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - "dev_backend:8080"
+          - "prod_backend:8080"
+
+  - job_name: "batch"
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets:
+          - "dev_batch:8080"
+          - "prod_batch:8080"
