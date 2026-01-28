@@ -1,50 +1,165 @@
+// -----------------------------------------------------------------------------
+// Alloy 자체 로그 설정
+// -----------------------------------------------------------------------------
 logging {
-  level  = "info"
-  format = "logfmt"
+  level  = "info"   // Alloy 자체 로그 레벨 설정입니다.
+  format = "logfmt" // Alloy 자체 로그 출력 포맷 설정입니다.
 }
 
+// -----------------------------------------------------------------------------
+// Docker 컨테이너 디스커버리
+// - 단일 노드(N100) 기준: 이 노드의 Docker daemon만 조회합니다.
+// -----------------------------------------------------------------------------
 discovery.docker "local" {
-  host = "unix:///var/run/docker.sock"
+  host = "unix:///var/run/docker.sock" // Docker socket 경로 설정입니다.
 }
 
+// -----------------------------------------------------------------------------
+// 수집 대상 필터링 + 라벨 표준화
+// - observability.logs=true 라벨이 붙은 컨테이너만 수집합니다.
+// - Swarm 서비스명을 service 라벨로 승격합니다.
+// - env 라벨을 추가합니다.
+// - node 라벨은 "표시만" 해두고 기본 비활성(단일 노드라 실익 적음)
+// -----------------------------------------------------------------------------
+discovery.relabel "docker_logs" {
+  targets = discovery.docker.local.targets // 디스커버리된 컨테이너 타깃 목록 입력입니다.
+
+  // (1) 수집 대상 필터링
+  // - 서비스 컨테이너에 labels: {"observability.logs":"true"} 를 붙이지 않으면 로그가 0건이 됩니다.
+  rule {
+    action        = "keep" // 조건에 맞는 타깃만 남기는 동작입니다.
+    source_labels = ["__meta_docker_container_label_observability_logs"] // 컨테이너 라벨 observability.logs 값입니다.
+    regex         = "true" // true인 컨테이너만 수집합니다.
+  }
+
+  // (2) Swarm 서비스명을 service 라벨로 승격
+  // - Swarm 라벨 키: com.docker.swarm.service.name
+  rule {
+    action        = "replace" // 라벨 값을 치환/생성하는 동작입니다.
+    source_labels = ["__meta_docker_container_label_com_docker_swarm_service_name"] // Swarm 서비스명 메타 라벨입니다.
+    target_label  = "service" // Loki 라벨 service로 저장합니다.
+  }
+
+  // (3) 환경 라벨 추가
+  // - Alloy 서비스에 APP_ENV=dev/prod 같은 환경변수를 주입해야 값이 채워집니다.
+  rule {
+    action       = "replace"      // 라벨 값을 치환/생성하는 동작입니다.
+    target_label = "env"          // Loki 라벨 env로 저장합니다.
+    replacement  = sys.env("APP_ENV") // Alloy 컨테이너 환경변수 APP_ENV 값을 사용합니다.
+  }
+
+  // (4) node 라벨(표시만, 기본 비활성)
+  // - 단일 노드(N100) 환경에서는 라벨로 넣어도 실익이 거의 없습니다.
+  // - 또한 sys.env("HOSTNAME")은 "호스트명"이 아니라 "컨테이너 hostname"일 수 있어 혼란이 생길 수 있습니다.
+  // - 필요해지면 주석을 해제해서 사용하십시오.
+  //
+  // rule {
+  //   action       = "replace"          // 라벨 값을 치환/생성하는 동작입니다.
+  //   target_label = "node"             // Loki 라벨 node로 저장합니다.
+  //   replacement  = sys.env("HOSTNAME") // 컨테이너 hostname(태스크명 비슷)일 수 있습니다.
+  // }
+}
+
+// -----------------------------------------------------------------------------
+// Docker 로그 소스
+// - 컨테이너 stdout/stderr를 읽어서 loki.process로 전달합니다.
+// -----------------------------------------------------------------------------
 loki.source.docker "containers" {
-  host       = "unix:///var/run/docker.sock"
-  targets    = discovery.docker.local.targets
-  labels     = { "job" = "docker" }
-  forward_to = [loki.write.default.receiver]
+  host = "unix:///var/run/docker.sock" // Docker socket 경로 설정입니다.
+
+  // 필터링 및 라벨 표준화된 타깃만 수집합니다.
+  targets       = discovery.relabel.docker_logs.output // relabel 결과 타깃 목록입니다.
+  relabel_rules = discovery.relabel.docker_logs.rules  // relabel 규칙을 실제 로그 라벨링에 적용합니다.
+
+  // 기본 라벨(저카디널리티)
+  labels = { job = "docker" } // Loki 쿼리에서 job 단위 필터링을 위한 라벨입니다.
+
+  // JSON 파이프라인으로 전달합니다.
+  forward_to = [loki.process.json.receiver] // 다음 처리 단계로 넘기는 설정입니다.
 }
 
+// -----------------------------------------------------------------------------
+// JSON 로그 파싱 및 라벨 승격
+// - Logback(LogstashEncoder) JSON 로그를 전제로 합니다.
+// - level만 라벨로 승격합니다(저카디널리티).
+// - trace_id/span_id는 라벨로 올리지 않습니다(카디널리티 폭발 방지).
+// -----------------------------------------------------------------------------
+loki.process "json" {
+  // JSON 파싱 단계
+  stage.json {
+    expressions = {
+      level   = "level"       // 로그 레벨 필드 파싱입니다.
+      logger  = "logger_name" // 로거명 필드 파싱입니다(키가 다르면 수정 필요).
+      message = "message"     // 메시지 필드 파싱입니다(키가 다르면 수정 필요).
+
+      // trace_id/span_id는 라벨 승격하지 않되, 필요하면 파싱만 하는 것은 가능합니다.
+      // trace_id = "trace_id"
+      // span_id  = "span_id"
+    }
+  }
+
+  // 라벨 승격 단계(저카디널리티만)
+  stage.labels {
+    values = {
+      level = "level" // level 값을 Loki 라벨 level로 승격합니다.
+    }
+  }
+
+  // 출력 메시지 치환 단계(선택)
+  // - 원문 JSON 전체를 유지하려면 주석 상태로 두십시오.
+  // - message만 남기고 싶으면 주석 해제하십시오.
+  //
+  // stage.output {
+  //   source = "message" // 출력 라인을 message 필드로 바꾸는 설정입니다.
+  // }
+
+  forward_to = [loki.write.default.receiver] // 최종 writer로 전달합니다.
+}
+
+// -----------------------------------------------------------------------------
+// Loki로 push 전송(Alloy가 push)
+// -----------------------------------------------------------------------------
 loki.write "default" {
   endpoint {
-    url = "http://loki:3100/loki/api/v1/push"
+    url = "http://loki:3100/loki/api/v1/push" // Loki push API 엔드포인트 설정입니다.
   }
 }
 
+// -----------------------------------------------------------------------------
+// OTLP 수신기(애플리케이션 OTel JavaAgent가 trace 전송)
+// - traces만 다음 단계로 전달합니다.
+// -----------------------------------------------------------------------------
 otelcol.receiver.otlp "default" {
   grpc {
-    endpoint = "0.0.0.0:4317"
+    endpoint = "0.0.0.0:4317" // OTLP gRPC 수신 포트 설정입니다.
   }
   http {
-    endpoint = "0.0.0.0:4318"
+    endpoint = "0.0.0.0:4318" // OTLP HTTP 수신 포트 설정입니다.
   }
 
   output {
-    traces = [otelcol.processor.batch.default.input]
+    traces = [otelcol.processor.batch.default.input] // traces만 배치 프로세서로 전달합니다.
   }
 }
 
+// -----------------------------------------------------------------------------
+// Batch processor(전송 효율 개선)
+// -----------------------------------------------------------------------------
 otelcol.processor.batch "default" {
   output {
-    traces = [otelcol.exporter.otlp.tempo.input]
+    traces = [otelcol.exporter.otlp.tempo.input] // 배치 처리 후 Tempo exporter로 전달합니다.
   }
 }
 
+// -----------------------------------------------------------------------------
+// Tempo로 OTLP 전송
+// -----------------------------------------------------------------------------
 otelcol.exporter.otlp "tempo" {
   client {
-    endpoint = "tempo:4317"
+    endpoint = "tempo:4317" // Tempo의 OTLP gRPC 엔드포인트 설정입니다.
     tls {
-      insecure             = true
-      insecure_skip_verify = true
+      insecure             = true // 내부망 기준 TLS 완화 설정입니다.
+      insecure_skip_verify = true // 내부망 기준 인증서 검증 스킵 설정입니다.
     }
   }
 }
