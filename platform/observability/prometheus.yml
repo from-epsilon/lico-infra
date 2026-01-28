@@ -10,13 +10,19 @@ scrape_configs:
   - job_name: "backend"
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets:
-          - "dev_backend:8080"
-          - "prod_backend:8080"
+      - targets: ["dev_backend:8000"]
+        labels:
+          env: "dev"
+      # - targets: ["prod_backend:8000"]
+      #   labels:
+      #     env: "prod"
 
   - job_name: "batch"
     metrics_path: /actuator/prometheus
     static_configs:
-      - targets:
-          - "dev_batch:8080"
-          - "prod_batch:8080"
+      - targets: ["dev_batch:8000"]
+        labels:
+          env: "dev"
+      # - targets: ["prod_batch:8000"]
+      #   labels:
+      #     env: "prod"
