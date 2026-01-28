@@ -82,11 +82,6 @@ services:
     configs:
       - source: alloy_config
         target: /etc/alloy/config.alloy
-    ports:
-      - target: 12345
-        published: 12345
-        protocol: tcp
-        mode: host
     networks:
       - platform_net
     deploy:
