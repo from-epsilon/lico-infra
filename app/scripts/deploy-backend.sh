@@ -22,6 +22,37 @@ log() {
   echo "[deploy] $*"
 }
 
+ensure_swarm_active() {
+  local swarm_state
+  swarm_state="$(docker info --format '{{.Swarm.LocalNodeState}}')"
+  if [[ "${swarm_state}" != "active" ]]; then
+    log "Swarm is not active on this node (state=${swarm_state})."
+    log "This deploy requires swarm mode for app/observability stacks."
+    exit 1
+  fi
+}
+
+ensure_platform_network() {
+  local network_name="${PLATFORM_NET_NAME}"
+
+  if docker network inspect "${network_name}" >/dev/null 2>&1; then
+    local driver attachable
+    driver="$(docker network inspect -f '{{.Driver}}' "${network_name}")"
+    attachable="$(docker network inspect -f '{{.Attachable}}' "${network_name}")"
+
+    if [[ "${driver}" != "overlay" || "${attachable}" != "true" ]]; then
+      log "Network ${network_name} must be overlay + attachable."
+      log "Current: driver=${driver}, attachable=${attachable}"
+      log "Fix: docker network rm ${network_name} && docker network create --driver overlay --attachable ${network_name}"
+      exit 1
+    fi
+    return 0
+  fi
+
+  log "Creating overlay attachable network: ${network_name}"
+  docker network create --driver overlay --attachable "${network_name}"
+}
+
 enable_trace_if_debug() {
   if [[ "${DEBUG_DEPLOY}" == "true" ]]; then
     export PS4='+ [${BASH_SOURCE}:${LINENO}] '
@@ -56,6 +87,13 @@ set -a
 source "${ENV_FILE}"
 set +a
 enable_trace_if_debug
+
+# ---------------------------------------------------------------------------
+# 플랫폼 네트워크 준비
+# ---------------------------------------------------------------------------
+: "${PLATFORM_NET_NAME:?PLATFORM_NET_NAME is required}"
+ensure_swarm_active
+ensure_platform_network
 
 # -----------------------------------------------------------------------------
 # Swarm secret 준비
