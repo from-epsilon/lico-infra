@@ -74,6 +74,8 @@ services:
       - "--server.http.listen-addr=0.0.0.0:12345"
       - "--storage.path=/var/lib/alloy/data"
       - "/etc/alloy/config.alloy"
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
     volumes:
       - alloy_data:/var/lib/alloy/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -81,7 +83,10 @@ services:
       - source: alloy_config
         target: /etc/alloy/config.alloy
     ports:
-      - "127.0.0.1:12345:12345"
+      - target: 12345
+        published: 12345
+        protocol: tcp
+        mode: host
     networks:
       - platform_net
     deploy:
