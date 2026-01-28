@@ -3,6 +3,10 @@ name: deploy-observability
 on:
   workflow_dispatch:
     inputs:
+      env:
+        description: "배포 환경"
+        required: true
+        type: string
       debug:
         description: "디버그 로그 출력 (true|false)"
         required: false
@@ -15,6 +19,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DEPLOY_ENV="${{ inputs.env }}"
+          if [[ "${DEPLOY_ENV}" != "dev" && "${DEPLOY_ENV}" != "prod" ]]; then
+            echo "Invalid env: ${DEPLOY_ENV} (allowed: dev, prod)"
+            exit 1
+          fi
 
       - name: Setup SSH
         shell: bash
@@ -58,6 +73,7 @@ jobs:
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
 
+          APP_ENV: ${{ inputs.env }}
           STACK_NAME: observability
           PLATFORM_NET_NAME: ${{ secrets.PLATFORM_NET_NAME }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
@@ -67,6 +83,7 @@ jobs:
           set -euo pipefail
 
           ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
+            APP_ENV="${APP_ENV}" \
             STACK_NAME="${STACK_NAME}" \
             PLATFORM_NET_NAME="${PLATFORM_NET_NAME}" \
             GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" \
@@ -99,6 +116,11 @@ jobs:
 
           if [[ -z "${GRAFANA_DOMAIN}" ]]; then
             echo "[deploy] GRAFANA_DOMAIN is empty"
+            exit 1
+          fi
+
+          if [[ -z "${APP_ENV:-}" ]]; then
+            echo "[deploy] APP_ENV is empty"
             exit 1
           fi
 
