@@ -9,20 +9,50 @@ scrape_configs:
 
   - job_name: "backend"
     metrics_path: /actuator/prometheus
-    static_configs:
-      - targets: ["backend:8000"]
-        labels:
-          env: "dev"
+    dns_sd_configs:
+      - names: ["tasks.backend"]
+        type: A
+        port: 8000
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        target_label: service
+        regex: 'tasks\.(.+)'
+        replacement: '$1'
+      - source_labels: [__address__]
+        target_label: replica_id
+        action: hashmod
+        modulus: 10000
+      - source_labels: [service, replica_id]
+        target_label: instance
+        separator: "-"
+        replacement: '$1'
+      - target_label: env
+        replacement: "dev"
       # - targets: ["prod_backend:8000"]
       #   labels:
       #     env: "prod"
 
   - job_name: "batch"
     metrics_path: /actuator/prometheus
-    static_configs:
-      - targets: ["batch:8000"]
-        labels:
-          env: "dev"
+    dns_sd_configs:
+      - names: ["tasks.batch"]
+        type: A
+        port: 8000
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        target_label: service
+        regex: 'tasks\.(.+)'
+        replacement: '$1'
+      - source_labels: [__address__]
+        target_label: replica_id
+        action: hashmod
+        modulus: 10000
+      - source_labels: [service, replica_id]
+        target_label: instance
+        separator: "-"
+        replacement: '$1'
+      - target_label: env
+        replacement: "dev"
       # - targets: ["prod_batch:8000"]
       #   labels:
       #     env: "prod"
