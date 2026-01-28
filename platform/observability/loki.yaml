@@ -7,16 +7,16 @@ server:
   grpc_server_max_concurrent_streams: 1000
 
 common:
-  instance_addr: 127.0.0.1
-  path_prefix: /loki
-  storage:
-    filesystem:
-      chunks_directory: /loki/chunks
-      rules_directory: /loki/rules
-  replication_factor: 1
   ring:
+    instance_addr: 127.0.0.1
     kvstore:
       store: inmemory
+  replication_factor: 1
+  path_prefix: /loki
+
+storage_config:
+  filesystem:
+    directory: /loki/chunks
 
 query_range:
   results_cache:
@@ -41,12 +41,6 @@ schema_config:
 
 pattern_ingester:
   enabled: true
-
-metric_aggregation:
-  loki_address: localhost:3100
-
-ruler:
-  alertmanager_url: http://localhost:9093
 
 frontend:
   encoding: protobuf
