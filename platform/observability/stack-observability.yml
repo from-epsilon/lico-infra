@@ -57,7 +57,7 @@ services:
     command:
       - "-config.file=/etc/tempo/tempo.yaml"
     volumes:
-      - tempo_data:/tempo
+      - tempo_data:/var/lib/tempo
     configs:
       - source: tempo_config
         target: /etc/tempo/tempo.yaml
