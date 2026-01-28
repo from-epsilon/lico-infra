@@ -3,6 +3,8 @@ services:
     image: ${IMAGE}
     networks:
       - platform_net
+    labels:
+      observability.logs: "true"
 
     secrets:
       - source: firebase_sa
@@ -39,7 +41,7 @@ services:
     stop_grace_period: 45s
 
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8000/actuator/health | grep -q '\"status\":\"UP\"'"]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -76,6 +78,8 @@ services:
     image: ${IMAGE}
     networks:
       - platform_net
+    labels:
+      observability.logs: "true"
 
     secrets:
       - source: firebase_sa
@@ -108,7 +112,7 @@ services:
     stop_grace_period: 45s
 
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/actuator/health | grep -q '\"status\":\"UP\"'"]
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8000/actuator/health | grep -q '\"status\":\"UP\"'"]
       interval: 20s
       timeout: 3s
       retries: 5
