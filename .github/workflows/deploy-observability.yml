@@ -74,7 +74,7 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
 
           APP_ENV: ${{ inputs.env }}
-          CONFIG_VERSION: ${{ github.sha }}
+          CONFIG_VERSION: ${{ github.run_id }}
           STACK_NAME: observability
           PLATFORM_NET_NAME: ${{ secrets.PLATFORM_NET_NAME }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
@@ -99,12 +99,10 @@ jobs:
             set -x
           fi
 
-          STACK_FILE="/home/epsilon/infra/platform/observability/stack-observability.yml"
-          OBSERVABILITY_DIR="$(dirname "${STACK_FILE}")"
-          export OBSERVABILITY_DIR
+          DEPLOY_SCRIPT="/home/epsilon/infra/platform/observability/deploy.sh"
 
-          if [[ ! -f "${STACK_FILE}" ]]; then
-            echo "[deploy] Stack file not found: ${STACK_FILE}"
+          if [[ ! -f "${DEPLOY_SCRIPT}" ]]; then
+            echo "[deploy] Deploy script not found: ${DEPLOY_SCRIPT}"
             exit 1
           fi
 
@@ -136,7 +134,8 @@ jobs:
           CONFIG_VERSION="${CONFIG_VERSION:0:12}"
           export CONFIG_VERSION
 
-          docker stack deploy -c "${STACK_FILE}" "${STACK_NAME}"
+          chmod +x "${DEPLOY_SCRIPT}"
+          "${DEPLOY_SCRIPT}"
 
           echo "[deploy] cleanup old configs (unused only)"
           prefix="${STACK_NAME}_"
