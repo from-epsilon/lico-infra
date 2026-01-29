@@ -93,19 +93,19 @@ services:
 
 configs:
   grafana_datasources:
-    file: ./grafana-datasources.yml
+    file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/grafana-datasources.yml
     name: ${STACK_NAME:?STACK_NAME is required}_grafana_datasources_${CONFIG_VERSION:?CONFIG_VERSION is required}
   prometheus_config:
-    file: ./prometheus.yml
+    file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/prometheus.yml
     name: ${STACK_NAME:?STACK_NAME is required}_prometheus_config_${CONFIG_VERSION:?CONFIG_VERSION is required}
   loki_config:
-    file: ./loki.yaml
+    file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/loki.yaml
     name: ${STACK_NAME:?STACK_NAME is required}_loki_config_${CONFIG_VERSION:?CONFIG_VERSION is required}
   tempo_config:
-    file: ./tempo.yaml
+    file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/tempo.yaml
     name: ${STACK_NAME:?STACK_NAME is required}_tempo_config_${CONFIG_VERSION:?CONFIG_VERSION is required}
   alloy_config:
-    file: ./alloy.river
+    file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/alloy.river
     name: ${STACK_NAME:?STACK_NAME is required}_alloy_config_${CONFIG_VERSION:?CONFIG_VERSION is required}
 
 volumes:

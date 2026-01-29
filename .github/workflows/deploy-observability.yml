@@ -100,6 +100,8 @@ jobs:
           fi
 
           STACK_FILE="/home/epsilon/infra/platform/observability/stack-observability.yml"
+          OBSERVABILITY_DIR="$(dirname "${STACK_FILE}")"
+          export OBSERVABILITY_DIR
 
           if [[ ! -f "${STACK_FILE}" ]]; then
             echo "[deploy] Stack file not found: ${STACK_FILE}"
