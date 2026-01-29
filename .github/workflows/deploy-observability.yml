@@ -79,6 +79,8 @@ jobs:
           PLATFORM_NET_NAME: ${{ secrets.PLATFORM_NET_NAME }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           GRAFANA_DOMAIN: ${{ secrets.GRAFANA_DOMAIN }}
+          TEMPO_UID: "0"
+          TEMPO_CHOWN: "false"
           DEBUG_DEPLOY: ${{ inputs.debug }}
         run: |
           set -euo pipefail
@@ -90,6 +92,8 @@ jobs:
             PLATFORM_NET_NAME="${PLATFORM_NET_NAME}" \
             GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" \
             GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-$SSH_HOST}" \
+            TEMPO_UID="${TEMPO_UID}" \
+            TEMPO_CHOWN="${TEMPO_CHOWN}" \
             DEBUG_DEPLOY="${DEBUG_DEPLOY}" \
             bash -s <<'REMOTE'
           set -euo pipefail
@@ -137,13 +141,4 @@ jobs:
           chmod +x "${DEPLOY_SCRIPT}"
           "${DEPLOY_SCRIPT}"
 
-          echo "[deploy] cleanup old configs (unused only)"
-          prefix="${STACK_NAME}_"
-          while IFS= read -r line; do
-            cfg_id="$(awk '{print $1}' <<< "${line}")"
-            cfg_name="$(awk '{print $2}' <<< "${line}")"
-            if [[ "${cfg_name}" == ${prefix}* ]]; then
-              docker config rm "${cfg_id}" >/dev/null 2>&1 || true
-            fi
-          done < <(docker config ls --format '{{.ID}} {{.Name}}')
           REMOTE

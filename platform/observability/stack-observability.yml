@@ -10,6 +10,7 @@ services:
       GF_SERVER_DOMAIN: ${GRAFANA_DOMAIN}
       GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
       GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      CONFIG_VERSION: ${CONFIG_VERSION}
     volumes:
       - grafana_data:/var/lib/grafana
     configs:
@@ -26,6 +27,8 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+    environment:
+      CONFIG_VERSION: ${CONFIG_VERSION}
     volumes:
       - prometheus_data:/prometheus
     configs:
@@ -41,6 +44,8 @@ services:
     image: grafana/loki:latest
     command:
       - "-config.file=/etc/loki/loki.yaml"
+    environment:
+      CONFIG_VERSION: ${CONFIG_VERSION}
     volumes:
       - loki_data:/loki
     configs:
@@ -54,12 +59,17 @@ services:
 
   tempo:
     image: grafana/tempo:latest
-    user: "${TEMPO_UID:-0}"
+    user: "${TEMPO_UID:-10001}"
     command:
+      - "-target=all"
       - "-config.file=/etc/tempo/tempo.yaml"
+    environment:
+      CONFIG_VERSION: ${CONFIG_VERSION}
     volumes:
       - tempo_data:/var/lib/tempo
-      - ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    configs:
+      - source: tempo_config
+        target: /etc/tempo/tempo.yaml
     networks:
       - platform_net
     deploy:
@@ -76,6 +86,7 @@ services:
       - "/etc/alloy/config.alloy"
     environment:
       APP_ENV: ${APP_ENV:-dev}
+      CONFIG_VERSION: ${CONFIG_VERSION}
     volumes:
       - alloy_data:/var/lib/alloy/data
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -99,6 +110,9 @@ configs:
   loki_config:
     file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/loki.yaml
     name: ${STACK_NAME:?STACK_NAME is required}_loki_config_${CONFIG_VERSION:?CONFIG_VERSION is required}
+  tempo_config:
+    file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/tempo.yaml
+    name: ${STACK_NAME:?STACK_NAME is required}_tempo_config_${CONFIG_VERSION:?CONFIG_VERSION is required}
   alloy_config:
     file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/alloy.river
     name: ${STACK_NAME:?STACK_NAME is required}_alloy_config_${CONFIG_VERSION:?CONFIG_VERSION is required}

@@ -10,7 +10,7 @@ scrape_configs:
   - job_name: "backend"
     metrics_path: /actuator/prometheus
     dns_sd_configs:
-      - names: ["tasks.backend"]
+      - names: ["tasks.dev_backend"]
         type: A
         port: 8000
     relabel_configs:
@@ -35,7 +35,7 @@ scrape_configs:
   - job_name: "batch"
     metrics_path: /actuator/prometheus
     dns_sd_configs:
-      - names: ["tasks.batch"]
+      - names: ["tasks.dev_batch"]
         type: A
         port: 8000
     relabel_configs:
