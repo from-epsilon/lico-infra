@@ -54,6 +54,7 @@ services:
 
   tempo:
     image: grafana/tempo:latest
+    user: "${TEMPO_UID:-0}"
     command:
       - "-config.file=/etc/tempo/tempo.yaml"
     volumes:
