@@ -56,12 +56,12 @@ services:
     image: grafana/tempo:latest
     user: "${TEMPO_UID:-0}"
     command:
-      - "-config.file=/etc/tempo/tempo.yaml"
+      - "-config.file=/run/configs/tempo.yaml"
     volumes:
       - tempo_data:/var/lib/tempo
     configs:
       - source: tempo_config
-        target: /etc/tempo/tempo.yaml
+        target: /run/configs/tempo.yaml
     networks:
       - platform_net
     deploy:
