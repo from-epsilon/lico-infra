@@ -56,12 +56,10 @@ services:
     image: grafana/tempo:latest
     user: "${TEMPO_UID:-0}"
     command:
-      - "-config.file=/run/configs/tempo.yaml"
+      - "-config.file=/etc/tempo/tempo.yaml"
     volumes:
       - tempo_data:/var/lib/tempo
-    configs:
-      - source: tempo_config
-        target: /run/configs/tempo.yaml
+      - ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/tempo.yaml:/etc/tempo/tempo.yaml:ro
     networks:
       - platform_net
     deploy:
@@ -101,9 +99,6 @@ configs:
   loki_config:
     file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/loki.yaml
     name: ${STACK_NAME:?STACK_NAME is required}_loki_config_${CONFIG_VERSION:?CONFIG_VERSION is required}
-  tempo_config:
-    file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/tempo.yaml
-    name: ${STACK_NAME:?STACK_NAME is required}_tempo_config_${CONFIG_VERSION:?CONFIG_VERSION is required}
   alloy_config:
     file: ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/alloy.river
     name: ${STACK_NAME:?STACK_NAME is required}_alloy_config_${CONFIG_VERSION:?CONFIG_VERSION is required}
