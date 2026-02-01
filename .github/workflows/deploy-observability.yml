@@ -66,7 +66,7 @@ jobs:
             "./platform/observability/" \
             "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/platform/observability/"
 
-      - name: Deploy observability stack (swarm)
+      - name: Deploy observability (compose)
         shell: bash
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -74,71 +74,30 @@ jobs:
           SSH_USER: ${{ secrets.SSH_USER }}
 
           APP_ENV: ${{ inputs.env }}
-          CONFIG_VERSION: ${{ github.run_id }}
-          STACK_NAME: observability
+          PROJECT_NAME: observability
           PLATFORM_NET_NAME: ${{ secrets.PLATFORM_NET_NAME }}
           GRAFANA_ADMIN_PASSWORD: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
           GRAFANA_DOMAIN: ${{ secrets.GRAFANA_DOMAIN }}
-          TEMPO_UID: "0"
-          TEMPO_CHOWN: "false"
-          DEBUG_DEPLOY: ${{ inputs.debug }}
         run: |
           set -euo pipefail
 
           ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
             APP_ENV="${APP_ENV}" \
-            CONFIG_VERSION="${CONFIG_VERSION}" \
-            STACK_NAME="${STACK_NAME}" \
+            PROJECT_NAME="${PROJECT_NAME}" \
             PLATFORM_NET_NAME="${PLATFORM_NET_NAME}" \
             GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD}" \
             GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-$SSH_HOST}" \
-            TEMPO_UID="${TEMPO_UID}" \
-            TEMPO_CHOWN="${TEMPO_CHOWN}" \
-            DEBUG_DEPLOY="${DEBUG_DEPLOY}" \
             bash -s <<'REMOTE'
           set -euo pipefail
 
-          if [[ "${DEBUG_DEPLOY:-false}" == "true" ]]; then
-            export PS4='+ [${BASH_SOURCE:-$0}:${LINENO}] '
-            set -x
-          fi
+          OBS_DIR="/home/epsilon/infra/platform/observability"
+          
+          export OBSERVABILITY_DIR="${OBS_DIR}"
+          export APP_ENV PROJECT_NAME PLATFORM_NET_NAME
+          export GRAFANA_ADMIN_PASSWORD GRAFANA_DOMAIN
 
-          DEPLOY_SCRIPT="/home/epsilon/infra/platform/observability/deploy.sh"
-
-          if [[ ! -f "${DEPLOY_SCRIPT}" ]]; then
-            echo "[deploy] Deploy script not found: ${DEPLOY_SCRIPT}"
-            exit 1
-          fi
-
-          if [[ -z "${PLATFORM_NET_NAME}" ]]; then
-            echo "[deploy] PLATFORM_NET_NAME is empty"
-            exit 1
-          fi
-
-          if [[ -z "${GRAFANA_ADMIN_PASSWORD}" ]]; then
-            echo "[deploy] GRAFANA_ADMIN_PASSWORD is empty"
-            exit 1
-          fi
-
-          if [[ -z "${GRAFANA_DOMAIN}" ]]; then
-            echo "[deploy] GRAFANA_DOMAIN is empty"
-            exit 1
-          fi
-
-          if [[ -z "${APP_ENV:-}" ]]; then
-            echo "[deploy] APP_ENV is empty"
-            exit 1
-          fi
-
-          if [[ -z "${CONFIG_VERSION:-}" ]]; then
-            echo "[deploy] CONFIG_VERSION is empty"
-            exit 1
-          fi
-
-          CONFIG_VERSION="${CONFIG_VERSION:0:12}"
-          export CONFIG_VERSION
-
-          chmod +x "${DEPLOY_SCRIPT}"
-          "${DEPLOY_SCRIPT}"
+          docker compose -p "${PROJECT_NAME}" \
+            -f "${OBS_DIR}/docker-compose-observability.yml" \
+            up -d --pull always --remove-orphans
 
           REMOTE

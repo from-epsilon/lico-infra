@@ -1,0 +1,101 @@
+version: "3.8"
+
+services:
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_DOMAIN: ${GRAFANA_DOMAIN}
+      GF_SERVER_ROOT_URL: "%(protocol)s://%(domain)s/grafana/"
+      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
+    networks:
+      platform_net:
+        aliases:
+          - observability_grafana
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    restart: on-failure
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    volumes:
+      - prometheus_data:/prometheus
+      - ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - platform_net
+    restart: on-failure
+
+  loki:
+    image: grafana/loki:latest
+    command:
+      - "-config.file=/etc/loki/loki.yaml"
+    volumes:
+      - loki_data:/loki
+      - ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/loki.yaml:/etc/loki/loki.yaml:ro
+    networks:
+      - platform_net
+    restart: on-failure
+
+  tempo:
+    image: grafana/tempo:latest
+    command:
+      - "-target=all"
+      - "-config.file=/etc/tempo/tempo.yaml"
+    volumes:
+      - tempo_data:/var/lib/tempo
+      - ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/tempo.yaml:/etc/tempo/tempo.yaml:ro
+    networks:
+      platform_net:
+        aliases:
+          - observability_tempo
+    restart: on-failure
+
+  alloy:
+    image: grafana/alloy:latest
+    command:
+      - "run"
+      - "--server.http.listen-addr=0.0.0.0:12345"
+      - "--server.http.ui-path-prefix=/alloy"
+      - "--storage.path=/var/lib/alloy/data"
+      - "/etc/alloy/config.alloy"
+    environment:
+      APP_ENV: ${APP_ENV:-dev}
+    volumes:
+      - alloy_data:/var/lib/alloy/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/alloy.river:/etc/alloy/config.alloy:ro
+    networks:
+      platform_net:
+        aliases:
+          - observability_alloy
+    depends_on:
+      - loki
+      - tempo
+    restart: on-failure
+
+volumes:
+  grafana_data:
+    name: ${PROJECT_NAME:-observability}_grafana_data
+  prometheus_data:
+    name: ${PROJECT_NAME:-observability}_prometheus_data
+  loki_data:
+    name: ${PROJECT_NAME:-observability}_loki_data
+  tempo_data:
+    name: ${PROJECT_NAME:-observability}_tempo_data
+  alloy_data:
+    name: ${PROJECT_NAME:-observability}_alloy_data
+
+networks:
+  platform_net:
+    external: true
+    name: ${PLATFORM_NET_NAME}

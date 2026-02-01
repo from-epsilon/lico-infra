@@ -39,13 +39,27 @@ discovery.relabel "docker_logs" {
     regex         = "true"
   }
 
-  // (2) Swarm 서비스명을 service 라벨로 승격
+  // (2) Compose/Swarm 서비스명을 service 라벨로 승격
+  // - Compose 라벨 키: com.docker.compose.service
+  rule {
+    // 라벨 값을 치환/생성하는 동작
+    action        = "replace"
+    // Compose 서비스명 메타 라벨
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    // 값이 있을 때만 적용
+    regex         = "(.+)"
+    // Loki 라벨 service로 저장
+    target_label  = "service"
+  }
+
   // - Swarm 라벨 키: com.docker.swarm.service.name
   rule {
     // 라벨 값을 치환/생성하는 동작
     action        = "replace"
     // Swarm 서비스명 메타 라벨
     source_labels = ["__meta_docker_container_label_com_docker_swarm_service_name"]
+    // 값이 있을 때만 적용
+    regex         = "(.+)"
     // Loki 라벨 service로 저장
     target_label  = "service"
   }
