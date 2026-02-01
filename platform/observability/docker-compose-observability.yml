@@ -55,9 +55,7 @@ services:
       - tempo_data:/var/lib/tempo
       - ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/tempo.yaml:/etc/tempo/tempo.yaml:ro
     networks:
-      platform_net:
-        aliases:
-          - observability_tempo
+      - platform_net
     restart: on-failure
 
   alloy:
