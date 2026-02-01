@@ -1,7 +1,14 @@
 server:
   http_listen_port: 3200
 
+memberlist:
+  join_members:
+    - observability_tempo:7946
+
 distributor:
+  ring:
+    kvstore:
+      store: memberlist
   receivers:
     otlp:
       protocols:
@@ -15,13 +22,13 @@ ingester:
   lifecycler:
     ring:
       kvstore:
-        store: inmemory
+        store: memberlist
       replication_factor: 1
 
 metrics_generator:
   ring:
     kvstore:
-      store: inmemory
+      store: memberlist
   traces_storage:
     path: /var/lib/tempo/generator/traces
   storage:
