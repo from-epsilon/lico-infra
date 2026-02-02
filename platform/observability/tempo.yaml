@@ -1,8 +1,10 @@
 server:
   http_listen_port: 3200
-  grpc_listen_port: 9095
 
 distributor:
+  ring:
+    kvstore:
+      store: inmemory
   receivers:
     otlp:
       protocols:
@@ -10,40 +12,36 @@ distributor:
           endpoint: "0.0.0.0:4317"
         http:
           endpoint: "0.0.0.0:4318"
-  ring:
-    kvstore:
-      store: inmemory
 
 ingester:
-  max_block_duration: 5m
   lifecycler:
     ring:
       kvstore:
         store: inmemory
       replication_factor: 1
+  max_block_duration: 5m
+
+storage:
+  trace:
+    backend: local
+    local:
+      path: /var/lib/tempo/blocks
+    wal:
+      path: /var/lib/tempo/wal
 
 metrics_generator:
   ring:
     kvstore:
       store: inmemory
-  traces_storage:
-    path: /var/lib/tempo/generator/traces
   storage:
     path: /var/lib/tempo/generator/wal
+  traces_storage:
+    path: /var/lib/tempo/generator/traces
   processor:
     local_blocks:
       filter_server_spans: false
-      flush_to_storage: false
 
 overrides:
   defaults:
     metrics_generator:
       processors: [local-blocks]
-      
-storage:
-  trace:
-    backend: local
-    wal:
-      path: /var/lib/tempo/wal
-    local:
-      path: /var/lib/tempo/blocks

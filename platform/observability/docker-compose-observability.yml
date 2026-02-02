@@ -47,7 +47,7 @@ services:
     restart: on-failure
 
   tempo:
-    image: grafana/tempo:latest
+    image: grafana/tempo:2.10.0
     command:
       - "-target=all"
       - "-config.file=/etc/tempo/tempo.yaml"
