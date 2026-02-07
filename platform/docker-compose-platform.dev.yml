@@ -9,6 +9,8 @@ services:
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - /home/epsilon/ringle/frontend-dist:/home/epsilon/ringle/frontend-dist:ro
+      - /home/epsilon/ringle/storage:/home/epsilon/ringle/storage
     networks:
       - platform_net
 
