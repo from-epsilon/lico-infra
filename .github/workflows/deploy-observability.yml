@@ -91,6 +91,12 @@ jobs:
           set -euo pipefail
 
           OBS_DIR="/home/epsilon/infra/platform/observability"
+          PROM_CONFIG="${OBS_DIR}/prometheus.${APP_ENV}.yml"
+
+          if [[ ! -f "${PROM_CONFIG}" ]]; then
+            echo "Prometheus config not found: ${PROM_CONFIG}"
+            exit 1
+          fi
           
           export OBSERVABILITY_DIR="${OBS_DIR}"
           export APP_ENV PROJECT_NAME PLATFORM_NET_NAME

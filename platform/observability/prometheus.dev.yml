@@ -16,8 +16,8 @@ scrape_configs:
     relabel_configs:
       - source_labels: [__meta_dns_name]
         target_label: service
-        regex: 'tasks\.(.+)'
-        replacement: '$1'
+        regex: "tasks\\.(.+)"
+        replacement: "$1"
       - source_labels: [__address__]
         target_label: replica_id
         action: hashmod
@@ -25,12 +25,9 @@ scrape_configs:
       - source_labels: [service, replica_id]
         target_label: instance
         separator: "-"
-        replacement: '$1'
+        replacement: "$1"
       - target_label: env
         replacement: "dev"
-      # - targets: ["prod_backend:8000"]
-      #   labels:
-      #     env: "prod"
 
   - job_name: "batch"
     metrics_path: /actuator/prometheus
@@ -41,8 +38,8 @@ scrape_configs:
     relabel_configs:
       - source_labels: [__meta_dns_name]
         target_label: service
-        regex: 'tasks\.(.+)'
-        replacement: '$1'
+        regex: "tasks\\.(.+)"
+        replacement: "$1"
       - source_labels: [__address__]
         target_label: replica_id
         action: hashmod
@@ -50,9 +47,6 @@ scrape_configs:
       - source_labels: [service, replica_id]
         target_label: instance
         separator: "-"
-        replacement: '$1'
+        replacement: "$1"
       - target_label: env
         replacement: "dev"
-      # - targets: ["prod_batch:8000"]
-      #   labels:
-      #     env: "prod"

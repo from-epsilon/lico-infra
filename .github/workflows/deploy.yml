@@ -42,6 +42,12 @@ jobs:
             exit 1
           fi
 
+          DEBUG_INPUT="${{ inputs.debug }}"
+          if [[ "${DEBUG_INPUT}" != "true" && "${DEBUG_INPUT}" != "false" ]]; then
+            echo "Invalid debug: ${DEBUG_INPUT} (allowed: true, false)"
+            exit 1
+          fi
+
       # SSH 세팅
       - name: Setup SSH
         shell: bash
@@ -97,6 +103,7 @@ jobs:
           GHCR_USER: ${{ secrets.GHCR_USER }}
           GHCR_PAT: ${{ secrets.GHCR_PAT }}
           FCM_SA_PATH: ${{ secrets.FCM_SA_PATH }}
+          DEBUG_DEPLOY: ${{ inputs.debug }}
         run: |
           set -euo pipefail
 
@@ -106,6 +113,7 @@ jobs:
             GHCR_USER="${GHCR_USER}" \
             GHCR_PAT="${GHCR_PAT}" \
             FCM_SA_PATH="${FCM_SA_PATH}" \
+            DEBUG_DEPLOY="${DEBUG_DEPLOY}" \
             bash -s <<'REMOTE'
           set -euo pipefail
 
@@ -115,6 +123,7 @@ jobs:
           echo "[deploy] DEPLOY_ENV=${DEPLOY_ENV}"
           echo "[deploy] IMAGE=${IMAGE}"
           echo "[deploy] FCM_SA_PATH=${FCM_SA_PATH}"
+          echo "[deploy] DEBUG_DEPLOY=${DEBUG_DEPLOY}"
 
           if [[ ! -f "${SCRIPT}" ]]; then
             echo "[deploy] Script not found: ${SCRIPT}"
@@ -124,7 +133,6 @@ jobs:
           sed -i 's/\r$//' "${SCRIPT}"
 
           chmod +x "${SCRIPT}"
-          bash -x "${SCRIPT}"
+          bash "${SCRIPT}"
           REMOTE
-
 

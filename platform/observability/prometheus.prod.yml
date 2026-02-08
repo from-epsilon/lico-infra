@@ -1,0 +1,52 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "backend"
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: ["tasks.prod_backend"]
+        type: A
+        port: 8000
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        target_label: service
+        regex: "tasks\\.(.+)"
+        replacement: "$1"
+      - source_labels: [__address__]
+        target_label: replica_id
+        action: hashmod
+        modulus: 10000
+      - source_labels: [service, replica_id]
+        target_label: instance
+        separator: "-"
+        replacement: "$1"
+      - target_label: env
+        replacement: "prod"
+
+  - job_name: "batch"
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: ["tasks.prod_batch"]
+        type: A
+        port: 8000
+    relabel_configs:
+      - source_labels: [__meta_dns_name]
+        target_label: service
+        regex: "tasks\\.(.+)"
+        replacement: "$1"
+      - source_labels: [__address__]
+        target_label: replica_id
+        action: hashmod
+        modulus: 10000
+      - source_labels: [service, replica_id]
+        target_label: instance
+        separator: "-"
+        replacement: "$1"
+      - target_label: env
+        replacement: "prod"

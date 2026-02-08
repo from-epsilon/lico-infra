@@ -1,61 +1,17 @@
-name: deploy-platform-infra
+name: renew-certbot
 
 on:
+  schedule:
+    # 04:00 KST (UTC 19:00 previous day)
+    - cron: "0 19 * * *"
   workflow_dispatch:
-    inputs:
-      env:
-        description: "배포 환경"
-        required: true
-        type: string
-      services:
-        description: "재기동할 서비스(공백 구분)"
-        required: false
-        default: "nginx postgres redis"
-        type: string
-      reload_nginx:
-        description: "nginx 설정 검증 및 reload 실행"
-        required: false
-        default: true
-        type: boolean
-      debug:
-        description: "디버그 로그 출력 (true|false)"
-        required: false
-        default: "false"
-        type: string
 
 jobs:
-  deploy:
+  renew:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Validate inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          DEPLOY_ENV="${{ inputs.env }}"
-          if [[ "${DEPLOY_ENV}" != "dev" && "${DEPLOY_ENV}" != "prod" ]]; then
-            echo "Invalid env: ${DEPLOY_ENV} (allowed: dev, prod)"
-            exit 1
-          fi
-
-          RAW_SERVICES="${{ inputs.services }}"
-          if [[ -z "${RAW_SERVICES}" ]]; then
-            echo "services is empty"
-            exit 1
-          fi
-
-          for svc in ${RAW_SERVICES}; do
-            case "${svc}" in
-              nginx|postgres|redis) ;;
-              *)
-                echo "Invalid service: ${svc} (allowed: nginx, postgres, redis)"
-                exit 1
-                ;;
-            esac
-          done
 
       - name: Setup SSH
         shell: bash
@@ -91,35 +47,24 @@ jobs:
             "./platform/" \
             "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/platform/"
 
-      - name: Reload platform infra (compose)
+      - name: Renew certbot (dev)
         shell: bash
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
           SSH_PORT: ${{ secrets.SSH_PORT }}
           SSH_USER: ${{ secrets.SSH_USER }}
-
-          DEPLOY_ENV: ${{ inputs.env }}
-          SERVICES: ${{ inputs.services }}
-          RELOAD_NGINX: ${{ inputs.reload_nginx }}
-          DEBUG_DEPLOY: ${{ inputs.debug }}
         run: |
           set -euo pipefail
 
-          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
-            DEPLOY_ENV="${DEPLOY_ENV}" \
-            SERVICES="${SERVICES}" \
-            RELOAD_NGINX="${RELOAD_NGINX}" \
-            DEBUG_DEPLOY="${DEBUG_DEPLOY}" \
-            bash -s <<'REMOTE'
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" bash -s <<'REMOTE'
           set -euo pipefail
 
+          DEPLOY_ENV="dev"
           REMOTE_DIR="/home/epsilon/infra"
           PLATFORM_DIR="${REMOTE_DIR}/platform"
           ENV_FILE="/home/epsilon/env/.env.${DEPLOY_ENV}"
           COMPOSE_FILE="${PLATFORM_DIR}/docker-compose-platform.${DEPLOY_ENV}.yml"
           PROJECT_NAME="platform-${DEPLOY_ENV}"
-          CONF_SRC="${PLATFORM_DIR}/nginx/conf.d/${DEPLOY_ENV}.conf"
-          CONF_DST="${PLATFORM_DIR}/nginx/conf.d/app.conf"
           MIGRATE_SCRIPT="${PLATFORM_DIR}/scripts/migrate-certbot-volumes.sh"
 
           if [[ ! -f "${ENV_FILE}" ]]; then
@@ -132,12 +77,7 @@ jobs:
             exit 1
           fi
 
-          if [[ ! -f "${CONF_SRC}" ]]; then
-            echo "Nginx conf not found: ${CONF_SRC}"
-            exit 1
-          fi
-
-          if [[ "${DEPLOY_ENV}" == "dev" && ! -f "${MIGRATE_SCRIPT}" ]]; then
+          if [[ ! -f "${MIGRATE_SCRIPT}" ]]; then
             echo "Migration script not found: ${MIGRATE_SCRIPT}"
             exit 1
           fi
@@ -148,10 +88,8 @@ jobs:
           set +a
 
           : "${PLATFORM_NET_NAME:?PLATFORM_NET_NAME is required}"
-          if [[ "${DEBUG_DEPLOY}" == "true" ]]; then
-            export PS4='+ [${BASH_SOURCE}:${LINENO}] '
-            set -x
-          fi
+          : "${CERTBOT_DOMAIN:?CERTBOT_DOMAIN is required in ${ENV_FILE}}"
+          : "${CERTBOT_EMAIL:?CERTBOT_EMAIL is required in ${ENV_FILE}}"
 
           if docker network inspect "${PLATFORM_NET_NAME}" >/dev/null 2>&1; then
             driver="$(docker network inspect -f '{{.Driver}}' "${PLATFORM_NET_NAME}")"
@@ -169,24 +107,34 @@ jobs:
             docker network create --driver overlay --attachable "${PLATFORM_NET_NAME}"
           fi
 
-          if [[ "${DEPLOY_ENV}" == "dev" ]]; then
-            chmod +x "${MIGRATE_SCRIPT}"
-            PROJECT_NAME="${PROJECT_NAME}" COMPOSE_FILE="${COMPOSE_FILE}" ENV_FILE="${ENV_FILE}" "${MIGRATE_SCRIPT}"
+          chmod +x "${MIGRATE_SCRIPT}"
+          PROJECT_NAME="${PROJECT_NAME}" COMPOSE_FILE="${COMPOSE_FILE}" ENV_FILE="${ENV_FILE}" "${MIGRATE_SCRIPT}"
+
+          docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d nginx
+
+          if docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+            run --rm -T --no-deps certbot \
+            sh -eu -c '
+              domain="$1"
+              test -s "/etc/letsencrypt/live/${domain}/fullchain.pem"
+              test -s "/etc/letsencrypt/live/${domain}/privkey.pem"
+            ' sh "${CERTBOT_DOMAIN}"; then
+            echo "Existing certificate found. Running renew."
+            docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+              run --rm -T --no-deps certbot \
+              renew --webroot -w /var/www/certbot
+          else
+            echo "No certificate found. Bootstrapping certificate with certonly."
+            docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
+              run --rm -T --no-deps certbot \
+              certonly --webroot -w /var/www/certbot \
+              -d "${CERTBOT_DOMAIN}" \
+              --email "${CERTBOT_EMAIL}" \
+              --agree-tos \
+              --no-eff-email
           fi
 
-          cp "${CONF_SRC}" "${CONF_DST}"
-
-          read -r -a TARGET_SERVICES <<<"${SERVICES}"
-          docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d "${TARGET_SERVICES[@]}"
-
-          if [[ "${RELOAD_NGINX}" == "true" ]]; then
-            if docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps --services --status running | grep -qx "nginx"; then
-              docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -t
-              docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -s reload
-            else
-              echo "nginx is not running; skip nginx reload"
-            fi
-          fi
-
+          docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -t
+          docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -s reload
           docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
           REMOTE

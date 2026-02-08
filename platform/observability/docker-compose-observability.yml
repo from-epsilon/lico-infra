@@ -30,7 +30,7 @@ services:
       - "--storage.tsdb.path=/prometheus"
     volumes:
       - prometheus_data:/prometheus
-      - ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ${OBSERVABILITY_DIR:?OBSERVABILITY_DIR is required}/prometheus.${APP_ENV}.yml:/etc/prometheus/prometheus.yml:ro
     networks:
       - platform_net
     restart: on-failure
