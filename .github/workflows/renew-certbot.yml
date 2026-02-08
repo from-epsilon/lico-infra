@@ -114,8 +114,8 @@ jobs:
           docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d nginx
 
           if docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
-            run --rm -T --no-deps certbot \
-            sh -eu -c '
+            run --rm -T --no-deps --entrypoint sh certbot \
+            -eu -c '
               domain="$1"
               test -s "/etc/letsencrypt/live/${domain}/fullchain.pem"
               test -s "/etc/letsencrypt/live/${domain}/privkey.pem"

@@ -32,9 +32,10 @@ migrate_dir_if_needed() {
   fi
 
   compose_run \
+    --entrypoint sh \
     --volume "${legacy_dir}:/legacy:ro" \
     certbot \
-    sh -eu -c '
+    -eu -c '
       label="$1"
       target="$2"
 
