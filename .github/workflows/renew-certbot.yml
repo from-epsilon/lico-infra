@@ -67,6 +67,8 @@ jobs:
           COMPOSE_FILE="${PLATFORM_DIR}/docker-compose-platform.${DEPLOY_ENV}.yml"
           PROJECT_NAME="platform-${DEPLOY_ENV}"
           MIGRATE_SCRIPT="${PLATFORM_DIR}/scripts/migrate-certbot-volumes.sh"
+          CONF_SRC="${PLATFORM_DIR}/nginx/conf.d/${DEPLOY_ENV}.conf"
+          CONF_DST="${PLATFORM_DIR}/nginx/conf.d/app.conf"
 
           if [[ ! -f "${ENV_FILE}" ]]; then
             echo "Env file not found: ${ENV_FILE}"
@@ -80,6 +82,11 @@ jobs:
 
           if [[ ! -f "${MIGRATE_SCRIPT}" ]]; then
             echo "Migration script not found: ${MIGRATE_SCRIPT}"
+            exit 1
+          fi
+
+          if [[ ! -f "${CONF_SRC}" ]]; then
+            echo "Nginx conf not found: ${CONF_SRC}"
             exit 1
           fi
 
@@ -111,6 +118,7 @@ jobs:
           chmod +x "${MIGRATE_SCRIPT}"
           PROJECT_NAME="${PROJECT_NAME}" COMPOSE_FILE="${COMPOSE_FILE}" ENV_FILE="${ENV_FILE}" "${MIGRATE_SCRIPT}"
 
+          cp "${CONF_SRC}" "${CONF_DST}"
           docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d nginx
 
           if docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
