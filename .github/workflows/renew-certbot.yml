@@ -44,6 +44,7 @@ jobs:
 
           rsync -az --delete \
             -e "ssh -p ${SSH_PORT}" \
+            --exclude "certbot/" \
             "./platform/" \
             "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/platform/"
 
