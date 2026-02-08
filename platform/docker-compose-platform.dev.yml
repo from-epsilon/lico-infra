@@ -12,8 +12,16 @@ services:
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
       - /home/epsilon/ringle/frontend-dist:/home/epsilon/ringle/frontend-dist:ro
       - /home/epsilon/ringle/storage:/home/epsilon/ringle/storage
+      - ./certbot/www:/var/www/certbot
+      - ./certbot/conf:/etc/letsencrypt
     networks:
       - platform_net
+
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - ./certbot/www:/var/www/certbot
+      - ./certbot/conf:/etc/letsencrypt
 
   postgres:
     image: postgres:18-alpine
