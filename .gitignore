@@ -3,6 +3,7 @@
 
 # nginx 로그
 platform/nginx/log/
+platform/nginx/conf.d/app.conf
 
 # 기타
 .DS_Store
