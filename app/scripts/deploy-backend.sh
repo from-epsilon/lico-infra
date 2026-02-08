@@ -139,7 +139,8 @@ if [[ ! -f "${COMPOSE_FILE}" ]]; then
 fi
 
 enable_trace_if_debug
-docker compose -p "platform-${DEPLOY_ENV}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d
+PLATFORM_SERVICES=(nginx postgres redis)
+docker compose -p "platform-${DEPLOY_ENV}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d "${PLATFORM_SERVICES[@]}"
 docker compose -p "platform-${DEPLOY_ENV}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -t
 docker compose -p "platform-${DEPLOY_ENV}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -s reload
 disable_trace

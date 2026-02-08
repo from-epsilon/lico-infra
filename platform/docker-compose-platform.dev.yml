@@ -22,6 +22,8 @@ services:
     volumes:
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt
+    networks:
+      - platform_net
 
   postgres:
     image: postgres:18-alpine

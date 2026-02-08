@@ -1,0 +1,181 @@
+name: deploy-platform-infra
+
+on:
+  workflow_dispatch:
+    inputs:
+      env:
+        description: "배포 환경"
+        required: true
+        type: string
+      services:
+        description: "재기동할 서비스(공백 구분)"
+        required: false
+        default: "nginx postgres redis"
+        type: string
+      reload_nginx:
+        description: "nginx 설정 검증 및 reload 실행"
+        required: false
+        default: true
+        type: boolean
+      debug:
+        description: "디버그 로그 출력 (true|false)"
+        required: false
+        default: "false"
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          DEPLOY_ENV="${{ inputs.env }}"
+          if [[ "${DEPLOY_ENV}" != "dev" && "${DEPLOY_ENV}" != "prod" ]]; then
+            echo "Invalid env: ${DEPLOY_ENV} (allowed: dev, prod)"
+            exit 1
+          fi
+
+          RAW_SERVICES="${{ inputs.services }}"
+          if [[ -z "${RAW_SERVICES}" ]]; then
+            echo "services is empty"
+            exit 1
+          fi
+
+          for svc in ${RAW_SERVICES}; do
+            case "${svc}" in
+              nginx|postgres|redis) ;;
+              *)
+                echo "Invalid service: ${svc} (allowed: nginx, postgres, redis)"
+                exit 1
+                ;;
+            esac
+          done
+
+      - name: Setup SSH
+        shell: bash
+        env:
+          SSH_KEY: ${{ secrets.SSH_KEY }}
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p ~/.ssh
+          echo "${SSH_KEY}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+          ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
+
+      - name: Sync platform to server (rsync --delete)
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+        run: |
+          set -euo pipefail
+
+          REMOTE_DIR="/home/epsilon/infra"
+
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "mkdir -p ${REMOTE_DIR}/platform"
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "command -v rsync >/dev/null 2>&1 || { echo 'rsync not found on server'; exit 1; }"
+
+          rsync -az --delete \
+            -e "ssh -p ${SSH_PORT}" \
+            "./platform/" \
+            "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/platform/"
+
+      - name: Reload platform infra (compose)
+        shell: bash
+        env:
+          SSH_HOST: ${{ secrets.SSH_HOST }}
+          SSH_PORT: ${{ secrets.SSH_PORT }}
+          SSH_USER: ${{ secrets.SSH_USER }}
+
+          DEPLOY_ENV: ${{ inputs.env }}
+          SERVICES: ${{ inputs.services }}
+          RELOAD_NGINX: ${{ inputs.reload_nginx }}
+          DEBUG_DEPLOY: ${{ inputs.debug }}
+        run: |
+          set -euo pipefail
+
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" \
+            DEPLOY_ENV="${DEPLOY_ENV}" \
+            SERVICES="${SERVICES}" \
+            RELOAD_NGINX="${RELOAD_NGINX}" \
+            DEBUG_DEPLOY="${DEBUG_DEPLOY}" \
+            bash -s <<'REMOTE'
+          set -euo pipefail
+
+          REMOTE_DIR="/home/epsilon/infra"
+          PLATFORM_DIR="${REMOTE_DIR}/platform"
+          ENV_FILE="/home/epsilon/env/.env.${DEPLOY_ENV}"
+          COMPOSE_FILE="${PLATFORM_DIR}/docker-compose-platform.${DEPLOY_ENV}.yml"
+          PROJECT_NAME="platform-${DEPLOY_ENV}"
+          CONF_SRC="${PLATFORM_DIR}/nginx/conf.d/${DEPLOY_ENV}.conf"
+          CONF_DST="${PLATFORM_DIR}/nginx/conf.d/app.conf"
+
+          if [[ ! -f "${ENV_FILE}" ]]; then
+            echo "Env file not found: ${ENV_FILE}"
+            exit 1
+          fi
+
+          if [[ ! -f "${COMPOSE_FILE}" ]]; then
+            echo "Compose file not found: ${COMPOSE_FILE}"
+            exit 1
+          fi
+
+          if [[ ! -f "${CONF_SRC}" ]]; then
+            echo "Nginx conf not found: ${CONF_SRC}"
+            exit 1
+          fi
+
+          set -a
+          # shellcheck disable=SC1090
+          source "${ENV_FILE}"
+          set +a
+
+          : "${PLATFORM_NET_NAME:?PLATFORM_NET_NAME is required}"
+          if [[ "${DEBUG_DEPLOY}" == "true" ]]; then
+            export PS4='+ [${BASH_SOURCE}:${LINENO}] '
+            set -x
+          fi
+
+          if docker network inspect "${PLATFORM_NET_NAME}" >/dev/null 2>&1; then
+            driver="$(docker network inspect -f '{{.Driver}}' "${PLATFORM_NET_NAME}")"
+            attachable="$(docker network inspect -f '{{.Attachable}}' "${PLATFORM_NET_NAME}")"
+            if [[ "${driver}" != "overlay" || "${attachable}" != "true" ]]; then
+              echo "Network ${PLATFORM_NET_NAME} must be overlay + attachable (driver=${driver}, attachable=${attachable})"
+              exit 1
+            fi
+          else
+            swarm_state="$(docker info --format '{{.Swarm.LocalNodeState}}')"
+            if [[ "${swarm_state}" != "active" ]]; then
+              echo "Network ${PLATFORM_NET_NAME} not found and swarm is not active (state=${swarm_state})"
+              exit 1
+            fi
+            docker network create --driver overlay --attachable "${PLATFORM_NET_NAME}"
+          fi
+
+          cp "${CONF_SRC}" "${CONF_DST}"
+
+          read -r -a TARGET_SERVICES <<<"${SERVICES}"
+          docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d "${TARGET_SERVICES[@]}"
+
+          if [[ "${RELOAD_NGINX}" == "true" ]]; then
+            if docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps --services --status running | grep -qx "nginx"; then
+              docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -t
+              docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -s reload
+            else
+              echo "nginx is not running; skip nginx reload"
+            fi
+          fi
+
+          docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" ps
+          REMOTE
