@@ -66,6 +66,8 @@ jobs:
           ENV_FILE="/home/epsilon/env/.env.${DEPLOY_ENV}"
           COMPOSE_FILE="${PLATFORM_DIR}/docker-compose-platform.${DEPLOY_ENV}.yml"
           PROJECT_NAME="platform-${DEPLOY_ENV}"
+          CERTBOT_CONF_VOLUME="${PROJECT_NAME}_certbot_conf"
+          CERTBOT_WWW_VOLUME="${PROJECT_NAME}_certbot_www"
           MIGRATE_SCRIPT="${PLATFORM_DIR}/scripts/migrate-certbot-volumes.sh"
           CONF_SRC="${PLATFORM_DIR}/nginx/conf.d/${DEPLOY_ENV}.conf"
           CONF_DST="${PLATFORM_DIR}/nginx/conf.d/app.conf"
@@ -118,9 +120,6 @@ jobs:
           chmod +x "${MIGRATE_SCRIPT}"
           PROJECT_NAME="${PROJECT_NAME}" COMPOSE_FILE="${COMPOSE_FILE}" ENV_FILE="${ENV_FILE}" "${MIGRATE_SCRIPT}"
 
-          cp "${CONF_SRC}" "${CONF_DST}"
-          docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d nginx
-
           if docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
             run --rm -T --no-deps --entrypoint sh certbot \
             -eu -c '
@@ -129,18 +128,26 @@ jobs:
               test -s "/etc/letsencrypt/live/${domain}/privkey.pem"
             ' sh "${CERTBOT_DOMAIN}"; then
             echo "Existing certificate found. Running renew."
+            cp "${CONF_SRC}" "${CONF_DST}"
+            docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d nginx
             docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
               run --rm -T --no-deps certbot \
               renew --webroot -w /var/www/certbot
           else
-            echo "No certificate found. Bootstrapping certificate with certonly."
-            docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" \
-              run --rm -T --no-deps certbot \
-              certonly --webroot -w /var/www/certbot \
+            echo "No certificate found. Bootstrapping certificate with standalone challenge."
+            docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" stop nginx || true
+            docker run --rm -p 80:80 \
+              -v "${CERTBOT_CONF_VOLUME}:/etc/letsencrypt" \
+              -v "${CERTBOT_WWW_VOLUME}:/var/www/certbot" \
+              certbot/certbot:latest \
+              certonly --standalone \
               -d "${CERTBOT_DOMAIN}" \
               --email "${CERTBOT_EMAIL}" \
               --agree-tos \
               --no-eff-email
+
+            cp "${CONF_SRC}" "${CONF_DST}"
+            docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d nginx
           fi
 
           docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -t
