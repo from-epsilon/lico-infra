@@ -120,44 +120,6 @@ echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 enable_trace_if_debug
 
 # -----------------------------------------------------------------------------
-# Nginx conf 교체 및 플랫폼 compose 반영
-# -----------------------------------------------------------------------------
-CONF_SRC="${REMOTE_DIR}/platform/nginx/conf.d/${DEPLOY_ENV}.conf"
-CONF_DST="${REMOTE_DIR}/platform/nginx/conf.d/app.conf"
-
-if [[ ! -f "${CONF_SRC}" ]]; then
-  log "Nginx conf not found: ${CONF_SRC}"
-  exit 1
-fi
-
-cp "${CONF_SRC}" "${CONF_DST}"
-
-COMPOSE_FILE="${REMOTE_DIR}/platform/docker-compose-platform.${DEPLOY_ENV}.yml"
-PROJECT_NAME="platform-${DEPLOY_ENV}"
-if [[ ! -f "${COMPOSE_FILE}" ]]; then
-  log "Compose file not found: ${COMPOSE_FILE}"
-  exit 1
-fi
-
-if [[ "${DEPLOY_ENV}" == "dev" ]]; then
-  MIGRATE_SCRIPT="${REMOTE_DIR}/platform/scripts/migrate-certbot-volumes.sh"
-  if [[ ! -f "${MIGRATE_SCRIPT}" ]]; then
-    log "Migration script not found: ${MIGRATE_SCRIPT}"
-    exit 1
-  fi
-
-  chmod +x "${MIGRATE_SCRIPT}"
-  PROJECT_NAME="${PROJECT_NAME}" COMPOSE_FILE="${COMPOSE_FILE}" ENV_FILE="${ENV_FILE}" "${MIGRATE_SCRIPT}"
-fi
-
-enable_trace_if_debug
-PLATFORM_SERVICES=(nginx postgres redis)
-docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" up -d "${PLATFORM_SERVICES[@]}"
-docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -t
-docker compose -p "${PROJECT_NAME}" --env-file "${ENV_FILE}" -f "${COMPOSE_FILE}" exec -T nginx nginx -s reload
-disable_trace
-
-# -----------------------------------------------------------------------------
 # backend stack deploy
 # -----------------------------------------------------------------------------
 STACK_FILE="${REMOTE_DIR}/app/stack-backend.yml"

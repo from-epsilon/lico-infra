@@ -64,8 +64,8 @@ jobs:
 
           ssh-keyscan -p "${SSH_PORT}" -H "${SSH_HOST}" >> ~/.ssh/known_hosts
 
-      # 서버에 인프라 파일 동기화
-      - name: Sync app/platform to server (rsync --delete)
+      # 서버에 app 폴더만 동기화 (플랫폼/인프라 미변경)
+      - name: Sync app to server (rsync --delete)
         shell: bash
         env:
           SSH_HOST: ${{ secrets.SSH_HOST }}
@@ -76,7 +76,7 @@ jobs:
 
           REMOTE_DIR="/home/epsilon/infra"
 
-          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "mkdir -p ${REMOTE_DIR}/app ${REMOTE_DIR}/platform"
+          ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "mkdir -p ${REMOTE_DIR}/app"
 
           ssh -p "${SSH_PORT}" "${SSH_USER}@${SSH_HOST}" "command -v rsync >/dev/null 2>&1 || { echo 'rsync not found on server'; exit 1; }"
 
@@ -84,13 +84,6 @@ jobs:
             -e "ssh -p ${SSH_PORT}" \
             "./app/" \
             "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/app/"
-
-          rsync -az --delete \
-            -e "ssh -p ${SSH_PORT}" \
-            --exclude "certbot/" \
-            --exclude "nginx/conf.d/app.conf" \
-            "./platform/" \
-            "${SSH_USER}@${SSH_HOST}:${REMOTE_DIR}/platform/"
 
       - name: Deploy on server (compose + swarm)
         shell: bash
